@@ -684,7 +684,9 @@ const subAmountLabel = s => s.cycle === "yearly"
   : `${yen(s.amount)}／月`;
 
 // その月の日別収支をまとめて計算する。
-// 記録開始日（state.startDate）より前の日は「対象外」：収入・固定費を計上せず、累計にも含めない。
+// - 記録開始日（state.startDate）より前の日は「対象外」：収入・固定費を計上せず、累計にも含めない。
+// - 未来の日（今日より後）は「予定」：日別の値は参考表示するが、実績（変動費・収支・累計）には含めない。
+//   まだ入っていない収入を月初から使える計算にしないため。
 function computeMonth(ym) {
   const n = daysInMonth(ym);
   const subs = activeSubs(ym);
@@ -693,6 +695,7 @@ function computeMonth(ym) {
   const incomeMonthly = incomeMonthlyFor(ym);
   const incomeDaily = incomeMonthly / n;
   const sd = state.startDate;
+  const today = todayStr();
 
   const varByDay = new Array(n + 1).fill(0);
   const expByDay = new Map();
@@ -705,34 +708,42 @@ function computeMonth(ym) {
   }
 
   const days = [];
-  let cum = 0, activeCount = 0, variableTotal = 0;
+  let cum = 0, activeCount = 0, countedDays = 0;
+  let variableTotal = 0, variableAll = 0;
   for (let d = 1; d <= n; d++) {
     const date = `${ym}-${String(d).padStart(2,"0")}`;
     const variable = varByDay[d];
     const active = !sd || date >= sd;
+    const counted = active && date <= today; // 実績に含める日
     let diff = 0;
     if (active) {
       activeCount++;
-      variableTotal += variable;
+      variableAll += variable;
       diff = incomeDaily - fixedDaily - variable;
-      cum += diff;
+      if (counted) {
+        countedDays++;
+        variableTotal += variable;
+        cum += diff;
+      }
     }
     days.push({
-      day: d, date, active, variable,
+      day: d, date, active, counted, variable,
       fixed: active ? fixedDaily : 0,
       income: active ? incomeDaily : 0,
       total: (active ? fixedDaily : 0) + variable,
-      diff, cum,
+      diff, cum: counted ? cum : null,
       expenses: expByDay.get(d) || [],
     });
   }
-  const incomeTotal = incomeDaily * activeCount;
-  const fixedTotal = fixedDaily * activeCount;
+  const incomeTotal = incomeDaily * countedDays;
+  const fixedTotal = fixedDaily * countedDays;
   return { ym, n, days, subs, fixedMonthly, fixedDaily, incomeMonthly, incomeDaily,
-           startDate: sd, activeCount, variableTotal,
+           startDate: sd, activeCount, countedDays, variableTotal, variableAll,
            incomeTotal, fixedTotal,
            expenseTotal: fixedTotal + variableTotal,
-           diffTotal: incomeTotal - fixedTotal - variableTotal };
+           diffTotal: incomeTotal - fixedTotal - variableTotal,
+           // 月末見込み：その月の対象日すべての収入・固定費と、記録済みの支出（予定含む）で計算
+           projectedDiff: (incomeDaily - fixedDaily) * activeCount - variableAll };
 }
 
 /* ---------- 画面状態 ---------- */
@@ -806,7 +817,8 @@ function renderDaily(m) {
   } else {
     tiles.append(
       tile("この月の変動費", yen(m.variableTotal)),
-      tile("この月の収支", signedYen(m.diffTotal), m.diffTotal >= 0 ? "pos" : "neg"),
+      tile("この月の収支", signedYen(m.diffTotal), m.diffTotal >= 0 ? "pos" : "neg",
+        m.countedDays < m.activeCount ? `今日までの実績（${m.countedDays}日分）` : null),
       tile("固定費（月額）", yen(m.fixedMonthly)),
       tile("1日に使える目安", yen(budgetDaily), null, "収入(日割) − 固定費(日割)"),
     );
@@ -825,7 +837,7 @@ function renderDaily(m) {
     const cells = d.active ? [
       label,
       yen(d.variable), yen(d.fixed), yen(d.total), yen(d.income),
-      signedYen(d.diff), signedYen(d.cum),
+      signedYen(d.diff), d.counted ? signedYen(d.cum) : "—",
     ] : [
       label,
       d.variable > 0 ? yen(d.variable) : "—",
@@ -835,8 +847,8 @@ function renderDaily(m) {
     cells.forEach((text, i) => {
       const td = document.createElement("td");
       td.textContent = text;
-      if (d.active && i === 5) td.classList.add(d.diff >= 0 ? "pos" : "neg");
-      if (d.active && i === 6) td.classList.add(d.cum >= 0 ? "pos" : "neg");
+      if (d.active && d.counted && i === 5) td.classList.add(d.diff >= 0 ? "pos" : "neg");
+      if (d.active && d.counted && i === 6) td.classList.add(d.cum >= 0 ? "pos" : "neg");
       tr.append(td);
     });
     tr.addEventListener("click", () => {
@@ -881,14 +893,19 @@ function renderDaily(m) {
 function renderSummary(m) {
   const tiles = $("#summary-tiles");
   tiles.textContent = "";
-  const partial = m.startDate && m.activeCount > 0 && m.activeCount < m.n;
+  const inProgress = m.countedDays < m.activeCount; // 今月または未来の月
   tiles.append(
     tile("収入（月額）", yen(m.incomeMonthly)),
     tile("固定費（月額）", yen(m.fixedMonthly)),
     tile("変動費（記録分）", yen(m.variableTotal)),
-    tile("月間収支", signedYen(m.diffTotal), m.diffTotal >= 0 ? "pos" : "neg",
-      partial ? `記録開始日以降（${m.activeCount}日分）で計算` : "収入 − 固定費 − 変動費"),
+    tile(inProgress ? "現時点の収支" : "月間収支", signedYen(m.diffTotal),
+      m.diffTotal >= 0 ? "pos" : "neg",
+      inProgress ? `今日までの実績（${m.countedDays}日分）で計算` : "収入 − 固定費 − 変動費"),
   );
+  if (inProgress && m.activeCount > 0) {
+    tiles.append(tile("月末見込み", signedYen(m.projectedDiff),
+      m.projectedDiff >= 0 ? "pos" : "neg", "月末までの収入・固定費と記録済みの支出で計算"));
+  }
   const note = rangeNote(m);
   if (note) tiles.append(note);
 
@@ -1096,7 +1113,7 @@ function renderLineChart(m) {
   const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
     "aria-label": "累計収支の推移" });
 
-  const act = m.days.filter(d => d.active);
+  const act = m.days.filter(d => d.counted);
   const vals = act.length ? act.map(d => d.cum) : [0];
   let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
   if (hi - lo < 1000) hi = lo + 1000;
@@ -1330,7 +1347,7 @@ function exportDailyCsv() {
   for (const d of m.days) {
     rows.push(d.active
       ? [d.date, Math.round(d.variable), Math.round(d.fixed), Math.round(d.total),
-         Math.round(d.income), Math.round(d.diff), Math.round(d.cum)]
+         Math.round(d.income), Math.round(d.diff), d.counted ? Math.round(d.cum) : ""]
       : [d.date, d.variable > 0 ? Math.round(d.variable) : "", "", "", "", "", ""]);
   }
   const text = "﻿" + rows.map(r => r.map(csvCell).join(",")).join("\r\n");
