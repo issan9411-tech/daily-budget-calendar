@@ -1,0 +1,26 @@
+name: Record reminder
+
+# 毎時実行し、日本時間が設定時刻と一致し、その日の記録が無ければ通知を送る。
+# 実行時刻は数分〜数十分遅れることがあります（GitHub Actionsの仕様）。
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install web-push --no-fund --no-audit
+      - run: node scripts/send-reminder.mjs
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}

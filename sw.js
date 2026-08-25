@@ -1,7 +1,7 @@
 // 日別収支カレンダー Service Worker
 // アプリ本体（シェル）をキャッシュしてオフラインでも開けるようにする。
 // GitHub API（同期通信）は一切キャッシュしない。
-const CACHE = "kakeibo-v1";
+const CACHE = "kakeibo-v2";
 const ASSETS = [
   "./",
   "index.html",
@@ -23,6 +23,30 @@ self.addEventListener("activate", e => {
     caches.keys()
       .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
+  );
+});
+
+// 記録リマインダーのプッシュ通知
+self.addEventListener("push", e => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch (err) {}
+  e.waitUntil(self.registration.showNotification(data.title || "日別収支カレンダー", {
+    body: data.body || "今日の支出をまだ記録していません。タップして記録しましょう",
+    icon: "icon-192.png",
+    badge: "icon-192.png",
+    tag: "daily-reminder",
+  }));
+});
+
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  e.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+      for (const c of list) {
+        if ("focus" in c) return c.focus();
+      }
+      return clients.openWindow("./");
+    })
   );
 });
 

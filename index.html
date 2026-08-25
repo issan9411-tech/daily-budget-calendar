@@ -529,6 +529,22 @@
     </div>
 
     <div class="card">
+      <h2>記録リマインダー<span class="note">指定時刻にその日の記録がまだ無ければ、通知でお知らせします</span></h2>
+      <form class="row" id="reminder-form">
+        <div class="field">
+          <label for="reminder-hour">通知時刻</label>
+          <select id="reminder-hour"></select>
+        </div>
+        <button type="submit" class="btn primary" id="reminder-enable">この端末で通知を有効にする</button>
+        <button type="button" class="btn" id="reminder-test">テスト通知</button>
+        <button type="button" class="btn danger-text hidden" id="reminder-disable">この端末の通知を解除</button>
+      </form>
+      <p class="empty" id="reminder-status"></p>
+      <p class="empty">iPhoneでは「ホーム画面に追加」したアプリから有効にしてください（iOS 16.4以降）。
+        通知の送信にはGitHub Actionsの初回設定が必要です（README参照）。時刻は多少前後することがあります。</p>
+    </div>
+
+    <div class="card">
       <h2>データ管理</h2>
       <div class="settings-actions">
         <button class="btn" id="export-daily-csv">日別収支をCSV出力（表示中の月）</button>
@@ -563,8 +579,12 @@ const EXPENSE_CATS = ["食費","日用品","交通費","交際費","趣味・娯
 const SUB_CATS = ["住居","水道光熱","通信","サブスク","保険","その他固定費"];
 
 const defaultState = () => ({ incomes: [], subs: [], expenses: [], extras: [],
-  templates: [], budgets: {}, startDate: null, updatedAt: 0 });
+  templates: [], budgets: {}, startDate: null,
+  reminder: { enabled: false, hour: 21 }, pushSubs: [], updatedAt: 0 });
 let state = defaultState();
+
+// Web Push（記録リマインダー）用の公開鍵。秘密鍵はリポジトリのSecretsに保存する
+const VAPID_PUBLIC = "BPLZadumYRg73B0nG_CeB10wxb9GrOfH2XGbgzDV_9hfCile6Z6QOZ4GvqrpNuLfem5vxiq7RvNu_X2Z19-NUqY";
 
 function normalize(d) {
   if (!d || typeof d !== "object") return null;
@@ -586,6 +606,7 @@ function normalize(d) {
       if (v > 0) budgets[k] = v;
     }
   }
+  const rHour = d.reminder && Number.isInteger(Number(d.reminder.hour)) ? Number(d.reminder.hour) : 21;
   return {
     incomes,
     subs: (Array.isArray(d.subs) ? d.subs : [])
@@ -595,6 +616,8 @@ function normalize(d) {
     templates: Array.isArray(d.templates) ? d.templates : [],
     budgets,
     startDate,
+    reminder: { enabled: !!(d.reminder && d.reminder.enabled), hour: Math.min(23, Math.max(0, rHour)) },
+    pushSubs: Array.isArray(d.pushSubs) ? d.pushSubs : [],
     updatedAt: Number(d.updatedAt) || 0,
   };
 }
@@ -1845,6 +1868,7 @@ function renderSettings() {
   $("#start-date").value = state.startDate || "";
   document.querySelectorAll(".budget-input").forEach(inp =>
     inp.value = state.budgets[inp.dataset.cat] || "");
+  renderReminderUi();
   renderSyncUi();
   updateIncomeFormMode();
   renderIncomeList();
@@ -1889,6 +1913,77 @@ function renderSettings() {
     }
     list.append(li);
   }
+}
+
+/* ---------- 記録リマインダー ---------- */
+function urlBase64ToUint8Array(base64) {
+  const padding = "=".repeat((4 - base64.length % 4) % 4);
+  const raw = atob((base64 + padding).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+function renderReminderUi() {
+  const status = $("#reminder-status");
+  $("#reminder-hour").value = String(state.reminder.hour);
+  const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  if (!supported) {
+    status.textContent = "この環境はプッシュ通知に対応していません。iPhoneはホーム画面に追加したアプリから開いてください。";
+    $("#reminder-enable").disabled = true;
+    return;
+  }
+  if (!syncCfg.token) {
+    status.textContent = "リマインダーには「端末間の同期」の設定が必要です（通知の送信先を同期データ経由で登録するため）。";
+    $("#reminder-enable").disabled = true;
+    return;
+  }
+  $("#reminder-enable").disabled = false;
+  navigator.serviceWorker.ready.then(reg => reg.pushManager.getSubscription()).then(sub => {
+    const registered = sub && state.pushSubs.some(s => s.endpoint === sub.endpoint);
+    $("#reminder-disable").classList.toggle("hidden", !registered);
+    if (registered && state.reminder.enabled) {
+      status.textContent = `この端末は通知が有効です（毎日${state.reminder.hour}時ごろ・記録済みの日はスキップ）。登録端末数: ${state.pushSubs.length}`;
+    } else if (state.pushSubs.length > 0 && state.reminder.enabled) {
+      status.textContent = `他の端末で通知が有効です（登録端末数: ${state.pushSubs.length}）。この端末でも受け取るには上のボタンを押してください。`;
+    } else {
+      status.textContent = "通知は未設定です。時刻を選んで有効にしてください。";
+    }
+  }).catch(() => {});
+}
+
+async function enableReminder() {
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") { toast("通知が許可されませんでした。端末の設定を確認してください"); return; }
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC),
+    });
+    const json = sub.toJSON();
+    state.pushSubs = state.pushSubs.filter(s => s.endpoint !== json.endpoint);
+    state.pushSubs.push({ endpoint: json.endpoint, keys: json.keys });
+    state.reminder = { enabled: true, hour: Number($("#reminder-hour").value) };
+    persist();
+    renderReminderUi();
+    toast(`毎日${state.reminder.hour}時ごろに通知します`);
+  } catch (e) {
+    toast("通知の登録に失敗しました：" + (e && e.message ? e.message : "不明なエラー"));
+  }
+}
+
+async function disableReminder() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      state.pushSubs = state.pushSubs.filter(s => s.endpoint !== sub.endpoint);
+      await sub.unsubscribe();
+    }
+    if (state.pushSubs.length === 0) state.reminder.enabled = false;
+    persist();
+    renderReminderUi();
+    toast("この端末の通知を解除しました");
+  } catch (e) { toast("解除に失敗しました"); }
 }
 
 /* ---------- CSV / バックアップ ---------- */
@@ -2017,6 +2112,39 @@ function initUi() {
     state.budgets = budgets;
     persist(); render();
     toast("予算を保存しました");
+  });
+
+  // 記録リマインダー
+  const hourSel = $("#reminder-hour");
+  for (let h = 0; h < 24; h++) {
+    const o = document.createElement("option");
+    o.value = String(h); o.textContent = `${h}時`;
+    hourSel.append(o);
+  }
+  hourSel.value = "21";
+  $("#reminder-form").addEventListener("submit", ev => {
+    ev.preventDefault();
+    enableReminder();
+  });
+  $("#reminder-disable").addEventListener("click", disableReminder);
+  $("#reminder-test").addEventListener("click", async () => {
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") { toast("通知が許可されていません"); return; }
+      const reg = await navigator.serviceWorker.ready;
+      await reg.showNotification("日別収支カレンダー", {
+        body: "テスト通知です。この形式でリマインダーが届きます",
+        icon: "icon-192.png", tag: "test",
+      });
+    } catch (e) { toast("テスト通知を表示できませんでした"); }
+  });
+  hourSel.addEventListener("change", () => {
+    if (state.reminder.enabled) {
+      state.reminder.hour = Number(hourSel.value);
+      persist();
+      renderReminderUi();
+      toast(`通知時刻を${state.reminder.hour}時に変更しました`);
+    }
   });
 
   document.querySelectorAll("nav.tabs button").forEach(b =>
