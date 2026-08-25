@@ -128,6 +128,8 @@
   th:first-child, td:first-child { text-align: left; }
   tr.today td { background: var(--accent-wash); }
   tr.future td { color: var(--text-muted); }
+  tr.inactive td { color: var(--text-muted); }
+  .range-note { grid-column: 1 / -1; color: var(--text-muted); font-size: 13px; padding: 4px 2px; }
   tr.day-row { cursor: pointer; }
   tr.day-row:hover td { background: var(--accent-wash); }
   .pos { color: var(--good); }
@@ -323,14 +325,39 @@
     </div>
 
     <div class="card">
-      <h2>収入の設定<span class="note">月収を登録すると、その月の日数で日割りされます</span></h2>
+      <h2>記録の開始日<span class="note">この日より前は収入・固定費を計上せず、累計収支にも含めません</span></h2>
+      <form class="row" id="startdate-form">
+        <div class="field">
+          <label for="start-date">開始日</label>
+          <input type="date" id="start-date">
+        </div>
+        <button type="submit" class="btn primary">保存</button>
+        <button type="button" class="btn" id="startdate-clear">クリア</button>
+      </form>
+      <p class="empty">家計簿を付け始めた日を設定すると、それより前の期間が累計収支に影響しなくなります。</p>
+    </div>
+
+    <div class="card">
+      <h2>月収の設定<span class="note">昇給・転職があれば期間ごとに登録できます。月収はその月の日数で日割りされます</span></h2>
       <form class="row" id="income-form">
         <div class="field">
           <label for="income-amount">月収（手取り・円）</label>
-          <input type="number" id="income-amount" min="0" step="1" placeholder="250000">
+          <input type="number" id="income-amount" min="1" step="1" required placeholder="250000">
         </div>
-        <button type="submit" class="btn primary">保存</button>
+        <div class="field">
+          <label for="income-start">開始月（空欄＝最初から）</label>
+          <input type="month" id="income-start">
+        </div>
+        <div class="field">
+          <label for="income-end">終了月（任意）</label>
+          <input type="month" id="income-end">
+        </div>
+        <button type="submit" class="btn primary" id="income-submit">登録</button>
+        <button type="button" class="btn hidden" id="income-cancel">キャンセル</button>
       </form>
+      <p class="editing-note hidden" id="income-edit-note"></p>
+      <ul class="plain" id="income-list" style="margin-top:12px;"></ul>
+      <p class="empty">例：2026年4月に昇給した場合は、前の月収に終了月「2026年3月」を設定し、新しい月収を開始月「2026年4月」で登録します。期間が重なる月は合算されます。</p>
     </div>
 
     <div class="card">
@@ -405,16 +432,28 @@ const GIST_FILE = "kakeibo-data.json";
 const EXPENSE_CATS = ["食費","日用品","交通費","交際費","趣味・娯楽","医療・健康","衣服・美容","その他"];
 const SUB_CATS = ["住居","水道光熱","通信","サブスク","保険","その他固定費"];
 
-const defaultState = () => ({ income: 0, subs: [], expenses: [], updatedAt: 0 });
+const defaultState = () => ({ incomes: [], subs: [], expenses: [], startDate: null, updatedAt: 0 });
 let state = defaultState();
 
 function normalize(d) {
   if (!d || typeof d !== "object") return null;
+  // 旧形式（単一の月収 income）は期間なしの1件として引き継ぐ
+  let incomes = Array.isArray(d.incomes) ? d.incomes : [];
+  if (incomes.length === 0 && Number(d.income) > 0) {
+    incomes = [{ id: "migrated-income", amount: Number(d.income), start: null, end: null }];
+  }
+  incomes = incomes
+    .map(i => ({ id: i.id || uid(), amount: Number(i.amount) || 0,
+                 start: i.start || null, end: i.end || null }))
+    .filter(i => i.amount > 0);
+  const startDate = (typeof d.startDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.startDate))
+    ? d.startDate : null;
   return {
-    income: Number(d.income) || 0,
+    incomes,
     subs: (Array.isArray(d.subs) ? d.subs : [])
       .map(s => ({ ...s, cycle: s.cycle === "yearly" ? "yearly" : "monthly" })),
     expenses: Array.isArray(d.expenses) ? d.expenses : [],
+    startDate,
     updatedAt: Number(d.updatedAt) || 0,
   };
 }
@@ -633,19 +672,27 @@ const signedYen = n => (n >= 0 ? "+" : "−") + Math.abs(Math.round(n)).toLocale
 function activeSubs(ym) {
   return state.subs.filter(s => s.start <= ym && (!s.end || ym <= s.end));
 }
+// その月に適用される月収（期間が重なる登録は合算）
+const activeIncomes = ym => state.incomes.filter(i =>
+  (!i.start || i.start <= ym) && (!i.end || ym <= i.end));
+const incomeMonthlyFor = ym => activeIncomes(ym).reduce((a, i) => a + i.amount, 0);
+
 // 年払いは月額換算（年額÷12）
 const subMonthly = s => s.cycle === "yearly" ? s.amount / 12 : s.amount;
 const subAmountLabel = s => s.cycle === "yearly"
   ? `${yen(s.amount)}／年（≒${yen(subMonthly(s))}／月）`
   : `${yen(s.amount)}／月`;
 
-// その月の日別収支をまとめて計算する
+// その月の日別収支をまとめて計算する。
+// 記録開始日（state.startDate）より前の日は「対象外」：収入・固定費を計上せず、累計にも含めない。
 function computeMonth(ym) {
   const n = daysInMonth(ym);
   const subs = activeSubs(ym);
   const fixedMonthly = subs.reduce((a, s) => a + subMonthly(s), 0);
   const fixedDaily = fixedMonthly / n;
-  const incomeDaily = state.income / n;
+  const incomeMonthly = incomeMonthlyFor(ym);
+  const incomeDaily = incomeMonthly / n;
+  const sd = state.startDate;
 
   const varByDay = new Array(n + 1).fill(0);
   const expByDay = new Map();
@@ -658,32 +705,44 @@ function computeMonth(ym) {
   }
 
   const days = [];
-  let cum = 0;
+  let cum = 0, activeCount = 0, variableTotal = 0;
   for (let d = 1; d <= n; d++) {
+    const date = `${ym}-${String(d).padStart(2,"0")}`;
     const variable = varByDay[d];
-    const diff = incomeDaily - fixedDaily - variable;
-    cum += diff;
+    const active = !sd || date >= sd;
+    let diff = 0;
+    if (active) {
+      activeCount++;
+      variableTotal += variable;
+      diff = incomeDaily - fixedDaily - variable;
+      cum += diff;
+    }
     days.push({
-      day: d,
-      date: `${ym}-${String(d).padStart(2,"0")}`,
-      variable, fixed: fixedDaily, income: incomeDaily,
-      total: fixedDaily + variable,
+      day: d, date, active, variable,
+      fixed: active ? fixedDaily : 0,
+      income: active ? incomeDaily : 0,
+      total: (active ? fixedDaily : 0) + variable,
       diff, cum,
       expenses: expByDay.get(d) || [],
     });
   }
-  const variableTotal = days.reduce((a, d) => a + d.variable, 0);
-  return { ym, n, days, subs, fixedMonthly, fixedDaily, incomeDaily,
-           variableTotal, expenseTotal: fixedMonthly + variableTotal,
-           diffTotal: state.income - fixedMonthly - variableTotal };
+  const incomeTotal = incomeDaily * activeCount;
+  const fixedTotal = fixedDaily * activeCount;
+  return { ym, n, days, subs, fixedMonthly, fixedDaily, incomeMonthly, incomeDaily,
+           startDate: sd, activeCount, variableTotal,
+           incomeTotal, fixedTotal,
+           expenseTotal: fixedTotal + variableTotal,
+           diffTotal: incomeTotal - fixedTotal - variableTotal };
 }
 
 /* ---------- 画面状態 ---------- */
 let viewYm = ymOf(todayStr());
 let currentView = "daily";
 const openDays = new Set(); // 明細を開いている日
-let confirmingSubId = null; // 削除確認中の固定費
-let editingSubId = null;    // 編集中の固定費
+let confirmingSubId = null;    // 削除確認中の固定費
+let editingSubId = null;       // 編集中の固定費
+let confirmingIncomeId = null; // 削除確認中の月収
+let editingIncomeId = null;    // 編集中の月収
 
 const $ = sel => document.querySelector(sel);
 
@@ -716,18 +775,32 @@ function tile(label, value, cls, hint) {
   return t;
 }
 
+function rangeNote(m) {
+  if (!m.startDate) return null;
+  const div = document.createElement("div");
+  div.className = "range-note";
+  if (m.activeCount === 0) {
+    div.textContent = `記録開始日（${m.startDate.replaceAll("-", "/")}）より前の月のため、収支は計上されません`;
+  } else if (ymOf(m.startDate) === m.ym && m.activeCount < m.n) {
+    div.textContent = `記録開始日（${m.startDate.replaceAll("-", "/")}）から計上しています`;
+  } else {
+    return null;
+  }
+  return div;
+}
+
 function renderDaily(m) {
   const tiles = $("#daily-tiles");
   tiles.textContent = "";
   const today = todayStr();
   const budgetDaily = m.incomeDaily - m.fixedDaily; // 1日に使える変動費の目安
 
-  if (viewYm === ymOf(today)) {
-    const d = m.days[Number(today.slice(8,10)) - 1];
+  const todayD = viewYm === ymOf(today) ? m.days[Number(today.slice(8,10)) - 1] : null;
+  if (todayD && todayD.active) {
     tiles.append(
-      tile("今日の変動費", yen(d.variable)),
-      tile("今日の収支", signedYen(d.diff), d.diff >= 0 ? "pos" : "neg"),
-      tile("今日までの累計収支", signedYen(d.cum), d.cum >= 0 ? "pos" : "neg"),
+      tile("今日の変動費", yen(todayD.variable)),
+      tile("今日の収支", signedYen(todayD.diff), todayD.diff >= 0 ? "pos" : "neg"),
+      tile("今日までの累計収支", signedYen(todayD.cum), todayD.cum >= 0 ? "pos" : "neg"),
       tile("1日に使える目安", yen(budgetDaily), null, "収入(日割) − 固定費(日割)"),
     );
   } else {
@@ -738,6 +811,8 @@ function renderDaily(m) {
       tile("1日に使える目安", yen(budgetDaily), null, "収入(日割) − 固定費(日割)"),
     );
   }
+  const note = rangeNote(m);
+  if (note) tiles.append(note);
 
   const tbody = $("#daily-table tbody");
   tbody.textContent = "";
@@ -746,16 +821,22 @@ function renderDaily(m) {
     tr.className = "day-row";
     if (d.date === today) tr.classList.add("today");
     if (d.date > today) tr.classList.add("future");
-    const cells = [
-      `${d.day}日（${"日月火水木金土"[new Date(d.date + "T00:00:00").getDay()]}）`,
+    const label = `${d.day}日（${"日月火水木金土"[new Date(d.date + "T00:00:00").getDay()]}）`;
+    const cells = d.active ? [
+      label,
       yen(d.variable), yen(d.fixed), yen(d.total), yen(d.income),
       signedYen(d.diff), signedYen(d.cum),
+    ] : [
+      label,
+      d.variable > 0 ? yen(d.variable) : "—",
+      "—", d.variable > 0 ? yen(d.variable) : "—", "—", "—", "—",
     ];
+    if (!d.active) tr.classList.add("inactive");
     cells.forEach((text, i) => {
       const td = document.createElement("td");
       td.textContent = text;
-      if (i === 5) td.classList.add(d.diff >= 0 ? "pos" : "neg");
-      if (i === 6) td.classList.add(d.cum >= 0 ? "pos" : "neg");
+      if (d.active && i === 5) td.classList.add(d.diff >= 0 ? "pos" : "neg");
+      if (d.active && i === 6) td.classList.add(d.cum >= 0 ? "pos" : "neg");
       tr.append(td);
     });
     tr.addEventListener("click", () => {
@@ -800,12 +881,16 @@ function renderDaily(m) {
 function renderSummary(m) {
   const tiles = $("#summary-tiles");
   tiles.textContent = "";
+  const partial = m.startDate && m.activeCount > 0 && m.activeCount < m.n;
   tiles.append(
-    tile("収入（月額）", yen(state.income)),
+    tile("収入（月額）", yen(m.incomeMonthly)),
     tile("固定費（月額）", yen(m.fixedMonthly)),
     tile("変動費（記録分）", yen(m.variableTotal)),
-    tile("月間収支", signedYen(m.diffTotal), m.diffTotal >= 0 ? "pos" : "neg", "収入 − 固定費 − 変動費"),
+    tile("月間収支", signedYen(m.diffTotal), m.diffTotal >= 0 ? "pos" : "neg",
+      partial ? `記録開始日以降（${m.activeCount}日分）で計算` : "収入 − 固定費 − 変動費"),
   );
+  const note = rangeNote(m);
+  if (note) tiles.append(note);
 
   // カテゴリ別（変動費は記録から、固定費は月額換算をカテゴリごとに合算）
   const byCat = new Map();
@@ -1011,7 +1096,8 @@ function renderLineChart(m) {
   const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
     "aria-label": "累計収支の推移" });
 
-  const vals = m.days.map(d => d.cum);
+  const act = m.days.filter(d => d.active);
+  const vals = act.length ? act.map(d => d.cum) : [0];
   let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
   if (hi - lo < 1000) hi = lo + 1000;
   const step = niceStep(hi - lo);
@@ -1037,12 +1123,14 @@ function renderLineChart(m) {
     }
   }
 
-  const pts = m.days.map(d => `${x(d.day)},${y(d.cum)}`).join(" ");
+  if (act.length === 0) { host.append(svg); return; }
+
+  const pts = act.map(d => `${x(d.day)},${y(d.cum)}`).join(" ");
   svg.append(svgEl("polyline", { points: pts, fill: "none", stroke: css("--series-1"),
     "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
 
   // 末尾のマーカーと直接ラベル
-  const last = m.days[m.n - 1];
+  const last = act[act.length - 1];
   svg.append(svgEl("circle", { cx: x(last.day), cy: y(last.cum), r: 4.5,
     fill: css("--series-1"), stroke: css("--surface"), "stroke-width": 2 }));
   const endT = svgEl("text", { x: x(last.day) - 6, y: y(last.cum) - 10, "text-anchor": "end",
@@ -1061,7 +1149,8 @@ function renderLineChart(m) {
   overlay.addEventListener("pointermove", ev => {
     const box = svg.getBoundingClientRect();
     const px = (ev.clientX - box.left) / box.width * W;
-    const day = Math.min(m.n, Math.max(1, Math.round((px - padL) / plotW * m.n + 0.5)));
+    const day = Math.min(act[act.length - 1].day,
+      Math.max(act[0].day, Math.round((px - padL) / plotW * m.n + 0.5)));
     const d = m.days[day - 1];
     cross.setAttribute("x1", x(day)); cross.setAttribute("x2", x(day));
     cross.setAttribute("visibility", "visible");
@@ -1117,9 +1206,80 @@ function cancelSubEdit() {
   $("#sub-name").value = ""; $("#sub-amount").value = ""; $("#sub-end").value = "";
   renderSettings();
 }
+function updateIncomeFormMode() {
+  const i = editingIncomeId ? state.incomes.find(x => x.id === editingIncomeId) : null;
+  if (!i) editingIncomeId = null;
+  $("#income-submit").textContent = i ? "更新" : "登録";
+  $("#income-cancel").classList.toggle("hidden", !i);
+  const note = $("#income-edit-note");
+  note.textContent = i ? `${yen(i.amount)}／月 の設定を編集中です。内容を変えて「更新」を押してください` : "";
+  note.classList.toggle("hidden", !i);
+}
+function startIncomeEdit(i) {
+  editingIncomeId = i.id;
+  confirmingIncomeId = null;
+  $("#income-amount").value = i.amount;
+  $("#income-start").value = i.start || "";
+  $("#income-end").value = i.end || "";
+  renderSettings();
+  $("#income-form").scrollIntoView({ block: "center" });
+  $("#income-amount").focus();
+}
+function cancelIncomeEdit() {
+  editingIncomeId = null;
+  $("#income-amount").value = ""; $("#income-start").value = ""; $("#income-end").value = "";
+  renderSettings();
+}
+const incomePeriodLabel = i =>
+  `${i.start ? i.start.replace("-", "/") : "最初"} 〜 ${i.end ? i.end.replace("-", "/") : ""}`;
+
+function renderIncomeList() {
+  const list = $("#income-list");
+  list.textContent = "";
+  if (state.incomes.length === 0) {
+    const p = document.createElement("li"); p.className = "empty"; p.textContent = "まだ登録がありません";
+    list.append(p);
+    return;
+  }
+  const sorted = [...state.incomes].sort((a, b) => (a.start || "").localeCompare(b.start || ""));
+  for (const i of sorted) {
+    const li = document.createElement("li");
+    if (confirmingIncomeId === i.id) {
+      const q = document.createElement("span"); q.className = "grow";
+      q.textContent = `月収 ${yen(i.amount)}（${incomePeriodLabel(i)}）を削除しますか？`;
+      const yes = document.createElement("button");
+      yes.className = "btn small danger-text"; yes.textContent = "削除する";
+      yes.addEventListener("click", () => {
+        confirmingIncomeId = null;
+        if (editingIncomeId === i.id) editingIncomeId = null;
+        state.incomes = state.incomes.filter(x => x.id !== i.id);
+        persist(); render();
+        toast("月収の設定を削除しました");
+      });
+      const no = document.createElement("button");
+      no.className = "btn small"; no.textContent = "キャンセル";
+      no.addEventListener("click", () => { confirmingIncomeId = null; renderSettings(); });
+      li.append(q, yes, no);
+    } else {
+      const grow = document.createElement("span"); grow.className = "grow amt"; grow.textContent = yen(i.amount) + "／月";
+      const meta = document.createElement("span"); meta.className = "sub-meta"; meta.textContent = incomePeriodLabel(i);
+      const edit = document.createElement("button");
+      edit.className = "btn small"; edit.textContent = "編集";
+      edit.addEventListener("click", () => startIncomeEdit(i));
+      const del = document.createElement("button");
+      del.className = "btn small danger-text"; del.textContent = "削除";
+      del.addEventListener("click", () => { confirmingIncomeId = i.id; renderSettings(); });
+      li.append(grow, meta, edit, del);
+    }
+    list.append(li);
+  }
+}
+
 function renderSettings() {
-  $("#income-amount").value = state.income || "";
+  $("#start-date").value = state.startDate || "";
   renderSyncUi();
+  updateIncomeFormMode();
+  renderIncomeList();
   updateSubFormMode();
   const list = $("#sub-list");
   list.textContent = "";
@@ -1168,8 +1328,10 @@ function exportDailyCsv() {
   const m = computeMonth(viewYm);
   const rows = [["日付","変動費","固定費(日割)","支出計","収入(日割)","差分","累計差分"]];
   for (const d of m.days) {
-    rows.push([d.date, Math.round(d.variable), Math.round(d.fixed), Math.round(d.total),
-      Math.round(d.income), Math.round(d.diff), Math.round(d.cum)]);
+    rows.push(d.active
+      ? [d.date, Math.round(d.variable), Math.round(d.fixed), Math.round(d.total),
+         Math.round(d.income), Math.round(d.diff), Math.round(d.cum)]
+      : [d.date, d.variable > 0 ? Math.round(d.variable) : "", "", "", "", "", ""]);
   }
   const text = "﻿" + rows.map(r => r.map(csvCell).join(",")).join("\r\n");
   download(`日別収支_${viewYm}.csv`, text, "text/csv");
@@ -1226,9 +1388,37 @@ function initUi() {
 
   $("#income-form").addEventListener("submit", ev => {
     ev.preventDefault();
-    state.income = Number($("#income-amount").value) || 0;
+    const amount = Number($("#income-amount").value);
+    const start = $("#income-start").value || null;
+    const end = $("#income-end").value || null;
+    if (!(amount > 0)) return;
+    if (start && end && end < start) { toast("終了月は開始月以降にしてください"); return; }
+    const fields = { amount, start, end };
+    if (editingIncomeId) {
+      const i = state.incomes.find(x => x.id === editingIncomeId);
+      if (i) Object.assign(i, fields);
+      editingIncomeId = null;
+      toast("月収を更新しました");
+    } else {
+      state.incomes.push({ id: uid(), ...fields });
+      toast("月収を登録しました");
+    }
+    persist();
+    $("#income-amount").value = ""; $("#income-start").value = ""; $("#income-end").value = "";
+    render();
+  });
+  $("#income-cancel").addEventListener("click", cancelIncomeEdit);
+
+  $("#startdate-form").addEventListener("submit", ev => {
+    ev.preventDefault();
+    state.startDate = $("#start-date").value || null;
     persist(); render();
-    toast("月収を保存しました");
+    toast(state.startDate ? "記録開始日を保存しました" : "記録開始日をクリアしました");
+  });
+  $("#startdate-clear").addEventListener("click", () => {
+    state.startDate = null;
+    persist(); render();
+    toast("記録開始日をクリアしました");
   });
 
   $("#sub-form").addEventListener("submit", ev => {
