@@ -1,0 +1,1359 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>日別収支カレンダー</title>
+<meta name="description" content="サブスク・固定費を日割りして、毎日の収支を計算する家計簿PWA">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#2a78d6">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="収支カレンダー">
+<style>
+  :root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface:        #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;  /* 変動費 */
+    --series-2:       #eb6834;  /* 固定費 */
+    --good:           #006300;
+    --bad:            #d03b3b;
+    --accent:         #2a78d6;
+    --accent-wash:    rgba(42,120,214,0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page:           #0d0d0d;
+      --surface:        #1a1a19;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --series-2:       #d95926;
+      --good:           #0ca30c;
+      --bad:            #e66767;
+      --accent:         #3987e5;
+      --accent-wash:    rgba(57,135,229,0.14);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    padding-top: env(safe-area-inset-top);
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 16px 16px 64px; }
+
+  header.app { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 8px 0 4px; }
+  header.app h1 { font-size: 20px; margin: 0; }
+  header.app .sub { color: var(--text-muted); font-size: 13px; }
+  .sync-chip {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--text-muted); white-space: nowrap; cursor: pointer;
+    border: none; background: none; padding: 0; font-family: inherit;
+  }
+  .sync-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+  .sync-chip.synced .dot { background: var(--good); }
+  .sync-chip.saving .dot { background: var(--series-2); }
+  .sync-chip.error .dot { background: var(--bad); }
+
+  .month-nav { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+  .month-nav .label { font-size: 18px; font-weight: 600; min-width: 8.5em; text-align: center; }
+  .btn {
+    appearance: none; border: 1px solid var(--border); background: var(--surface);
+    color: var(--text-primary); border-radius: 8px; padding: 6px 12px; font-size: 14px;
+    cursor: pointer; font-family: inherit;
+  }
+  .btn:hover { background: var(--accent-wash); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.danger-text { color: var(--bad); }
+  .btn.small { padding: 3px 9px; font-size: 13px; }
+
+  nav.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--grid); margin: 4px 0 16px; overflow-x: auto; }
+  nav.tabs button {
+    appearance: none; border: none; background: none; color: var(--text-secondary);
+    font-size: 14px; padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent;
+    white-space: nowrap; font-family: inherit;
+  }
+  nav.tabs button.active { color: var(--text-primary); font-weight: 600; border-bottom-color: var(--accent); }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 12px; }
+  .card h2 .note { font-weight: 400; color: var(--text-muted); font-size: 12px; margin-left: 8px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+  .tile .label { font-size: 12px; color: var(--text-secondary); }
+  .tile .value { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  .tile .hint { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  form.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+  form.row .field { display: flex; flex-direction: column; gap: 2px; }
+  form.row label { font-size: 12px; color: var(--text-secondary); }
+  input, select {
+    background: var(--surface); color: var(--text-primary);
+    border: 1px solid var(--baseline); border-radius: 8px; padding: 6px 8px; font-size: 14px;
+    font-family: inherit;
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input[type="number"] { width: 8em; }
+  input[type="month"] { width: 10em; }
+
+  .table-scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { padding: 6px 10px; text-align: right; white-space: nowrap; }
+  th { color: var(--text-muted); font-weight: 500; font-size: 12px; border-bottom: 1px solid var(--baseline); }
+  td { border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; }
+  tr.today td { background: var(--accent-wash); }
+  tr.future td { color: var(--text-muted); }
+  tr.day-row { cursor: pointer; }
+  tr.day-row:hover td { background: var(--accent-wash); }
+  .pos { color: var(--good); }
+  .neg { color: var(--bad); }
+  .detail-cell { text-align: left !important; padding: 4px 10px 10px 24px; }
+  .detail-item { display: flex; gap: 10px; align-items: center; padding: 2px 0; font-size: 13px; color: var(--text-secondary); }
+  .detail-item .amt { font-variant-numeric: tabular-nums; color: var(--text-primary); min-width: 6em; text-align: right; }
+  .cat-chip { display: inline-block; font-size: 11px; border: 1px solid var(--border); border-radius: 999px; padding: 0 8px; color: var(--text-secondary); }
+  .empty { color: var(--text-muted); font-size: 13px; padding: 12px 0; }
+  .editing-note { color: var(--accent); font-size: 13px; font-weight: 600; margin: 0 0 8px; }
+
+  ul.plain { list-style: none; margin: 0; padding: 0; }
+  ul.plain li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--grid); flex-wrap: wrap; }
+  ul.plain li:last-child { border-bottom: none; }
+  ul.plain .grow { flex: 1; min-width: 8em; }
+  ul.plain .sub-meta { font-size: 12px; color: var(--text-muted); }
+  ul.plain .amt { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  .catbar-row { display: grid; grid-template-columns: 7.5em 1fr 6em; gap: 10px; align-items: center; padding: 5px 0; font-size: 13px; }
+  .catbar-row .name { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .catbar-track { height: 14px; position: relative; }
+  .catbar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--series-1); border-radius: 0 4px 4px 0; min-width: 2px; }
+  .catbar-row .val { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .chart-card { position: relative; }
+  .chart-svg { display: block; width: 100%; height: auto; }
+  .chart-tooltip {
+    position: absolute; pointer-events: none; z-index: 5; display: none;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.15);
+    min-width: 10em;
+  }
+  .chart-tooltip .tt-title { color: var(--text-muted); margin-bottom: 4px; }
+  .chart-tooltip .tt-row { display: flex; align-items: center; gap: 6px; }
+  .chart-tooltip .tt-key { width: 12px; height: 3px; border-radius: 2px; flex: none; }
+  .chart-tooltip .tt-val { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .chart-tooltip .tt-name { color: var(--text-secondary); }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; flex-wrap: wrap; }
+  .legend .key { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; }
+
+  .settings-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .confirm-strip {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    border: 1px solid var(--bad); border-radius: 8px; padding: 8px 12px; margin-top: 10px;
+    font-size: 13px;
+  }
+  .sync-guide { font-size: 13px; color: var(--text-secondary); margin: 8px 0 0; }
+  .sync-guide ol { margin: 4px 0 0; padding-left: 20px; }
+  .sync-guide a { color: var(--accent); }
+  .sync-status-line { font-size: 13px; margin-top: 10px; }
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: var(--text-primary); color: var(--page);
+    border-radius: 999px; padding: 8px 18px; font-size: 13px;
+    opacity: 0; pointer-events: none; transition: opacity 0.25s; z-index: 20;
+    max-width: 90vw;
+  }
+  .toast.show { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+  .hidden { display: none !important; }
+  footer.app { color: var(--text-muted); font-size: 12px; margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="app">
+    <h1>日別収支カレンダー</h1>
+    <span class="sub">サブスク・固定費を日割りして、毎日の使えるお金を見える化</span>
+    <button class="sync-chip" id="sync-chip" title="タップで設定タブの同期設定へ">
+      <span class="dot"></span><span id="sync-text">この端末のみ（同期未設定）</span>
+    </button>
+  </header>
+
+  <div class="month-nav">
+    <button class="btn" id="prev-month" aria-label="前の月">‹</button>
+    <span class="label" id="month-label"></span>
+    <button class="btn" id="next-month" aria-label="次の月">›</button>
+    <button class="btn" id="this-month">今月</button>
+  </div>
+
+  <nav class="tabs" role="tablist">
+    <button data-view="daily" class="active">日別一覧</button>
+    <button data-view="summary">月間サマリー</button>
+    <button data-view="charts">グラフ</button>
+    <button data-view="settings">設定</button>
+  </nav>
+
+  <!-- ============ 日別一覧 ============ -->
+  <section id="view-daily">
+    <div class="tiles" id="daily-tiles"></div>
+
+    <div class="card">
+      <h2>支出を記録<span class="note">食費や買い物など、その都度の支出</span></h2>
+      <form class="row" id="expense-form">
+        <div class="field">
+          <label for="exp-date">日付</label>
+          <input type="date" id="exp-date" required>
+        </div>
+        <div class="field">
+          <label for="exp-amount">金額（円）</label>
+          <input type="number" id="exp-amount" min="1" step="1" required placeholder="1200">
+        </div>
+        <div class="field">
+          <label for="exp-cat">カテゴリ</label>
+          <select id="exp-cat"></select>
+        </div>
+        <div class="field" style="flex:1; min-width:10em;">
+          <label for="exp-memo">メモ（任意）</label>
+          <input type="text" id="exp-memo" placeholder="コンビニ など" style="width:100%;">
+        </div>
+        <button type="submit" class="btn primary">追加</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>日別の収支<span class="note">行をクリックすると支出の明細を表示</span></h2>
+      <div class="table-scroll">
+        <table id="daily-table">
+          <thead>
+            <tr>
+              <th>日付</th><th>変動費</th><th>固定費(日割)</th><th>支出計</th><th>収入(日割)</th><th>差分</th><th>累計差分</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 月間サマリー ============ -->
+  <section id="view-summary" class="hidden">
+    <div class="tiles" id="summary-tiles"></div>
+    <div class="card">
+      <h2>カテゴリ別支出<span class="note">変動費＋固定費（月額）</span></h2>
+      <div id="category-bars"></div>
+    </div>
+    <div class="card">
+      <h2>登録中の固定費・サブスク<span class="note" id="subs-summary-note"></span></h2>
+      <div id="subs-summary"></div>
+    </div>
+  </section>
+
+  <!-- ============ グラフ ============ -->
+  <section id="view-charts" class="hidden">
+    <div class="card chart-card">
+      <h2>日別の支出<span class="note">横の基準線＝1日あたりの収入（日割り）</span></h2>
+      <div class="legend">
+        <span><span class="key" style="background:var(--series-1)"></span>変動費</span>
+        <span><span class="key" style="background:var(--series-2)"></span>固定費（日割り）</span>
+      </div>
+      <div id="chart-bars"></div>
+      <div class="chart-tooltip" id="tt-bars"></div>
+    </div>
+    <div class="card chart-card">
+      <h2>累計収支の推移<span class="note">その日までの「収入−支出」の積み上げ</span></h2>
+      <div id="chart-line"></div>
+      <div class="chart-tooltip" id="tt-line"></div>
+    </div>
+    <p class="empty">※ 数値の一覧は「日別一覧」タブで確認できます。</p>
+  </section>
+
+  <!-- ============ 設定 ============ -->
+  <section id="view-settings" class="hidden">
+    <div class="card" id="sync-card">
+      <h2>端末間の同期<span class="note">あなたのGitHubアカウントの非公開Gistにデータを保存します</span></h2>
+      <div id="sync-off-ui">
+        <form class="row" id="sync-form">
+          <div class="field" style="flex:1; min-width:14em;">
+            <label for="sync-token">GitHubアクセストークン（gist権限）</label>
+            <input type="password" id="sync-token" placeholder="ghp_..." autocomplete="off" style="width:100%;">
+          </div>
+          <button type="submit" class="btn primary" id="sync-enable">同期を有効にする</button>
+        </form>
+        <div class="sync-guide">
+          トークンの作り方（初回のみ・1分）：
+          <ol>
+            <li><a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=kakeibo-sync" target="_blank" rel="noopener">このリンク</a>を開く（GitHubのトークン作成画面。「gist」権限だけが選択済みになっています）</li>
+            <li>有効期限（Expiration）を「No expiration」か長めに設定し、「Generate token」を押す</li>
+            <li>表示されたトークン（ghp_...）をコピーして上の欄に貼り付ける</li>
+          </ol>
+          トークンはこの端末のブラウザ内にのみ保存され、Gistの読み書きにしか使えません。他の端末でも同じトークンを貼れば、同じデータに自動でつながります。
+        </div>
+      </div>
+      <div id="sync-on-ui" class="hidden">
+        <p class="sync-status-line" id="sync-status-line"></p>
+        <div class="settings-actions">
+          <button class="btn" id="sync-now">今すぐ同期</button>
+          <button class="btn danger-text" id="sync-disable">この端末の同期を解除</button>
+        </div>
+        <p class="empty">解除してもGist上のデータと他の端末の設定はそのまま残ります。</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>収入の設定<span class="note">月収を登録すると、その月の日数で日割りされます</span></h2>
+      <form class="row" id="income-form">
+        <div class="field">
+          <label for="income-amount">月収（手取り・円）</label>
+          <input type="number" id="income-amount" min="0" step="1" placeholder="250000">
+        </div>
+        <button type="submit" class="btn primary">保存</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>固定費・サブスクの登録<span class="note">家賃・通信費・動画配信など。年払いは自動で月額換算（÷12）し、日割りで毎日の支出に反映</span></h2>
+      <form class="row" id="sub-form">
+        <div class="field">
+          <label for="sub-name">名前</label>
+          <input type="text" id="sub-name" required placeholder="家賃 / Netflix など">
+        </div>
+        <div class="field">
+          <label for="sub-cycle">支払い</label>
+          <select id="sub-cycle">
+            <option value="monthly">月払い</option>
+            <option value="yearly">年払い</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="sub-amount" id="sub-amount-label">支払額（円）</label>
+          <input type="number" id="sub-amount" min="1" step="1" required placeholder="1490（月額）">
+        </div>
+        <div class="field">
+          <label for="sub-cat">カテゴリ</label>
+          <select id="sub-cat"></select>
+        </div>
+        <div class="field">
+          <label for="sub-start">開始月</label>
+          <input type="month" id="sub-start" required>
+        </div>
+        <div class="field">
+          <label for="sub-end">終了月（任意）</label>
+          <input type="month" id="sub-end">
+        </div>
+        <button type="submit" class="btn primary" id="sub-submit">登録</button>
+        <button type="button" class="btn hidden" id="sub-cancel">キャンセル</button>
+      </form>
+      <p class="editing-note hidden" id="sub-edit-note"></p>
+      <ul class="plain" id="sub-list" style="margin-top:12px;"></ul>
+      <p class="empty">解約したサブスクは、削除ではなく「終了月」を設定すると過去の月の計算が保たれます。</p>
+    </div>
+
+    <div class="card">
+      <h2>データ管理</h2>
+      <div class="settings-actions">
+        <button class="btn" id="export-daily-csv">日別収支をCSV出力（表示中の月）</button>
+        <button class="btn" id="export-expenses-csv">支出明細をCSV出力（全期間）</button>
+        <button class="btn" id="export-json">バックアップ（JSON）</button>
+        <button class="btn" id="import-json">復元（JSON読み込み）</button>
+        <input type="file" id="import-file" accept="application/json" class="hidden">
+      </div>
+      <div class="confirm-strip hidden" id="import-confirm">
+        <span>現在のデータをバックアップの内容で置き換えます。よろしいですか？</span>
+        <button class="btn small danger-text" id="import-yes">置き換える</button>
+        <button class="btn small" id="import-no">キャンセル</button>
+      </div>
+      <p class="empty" id="storage-note"></p>
+    </div>
+  </section>
+
+  <footer class="app">日割り計算：月額 ÷ その月の日数（年払いは年額÷12で月額換算。月の合計はちょうど月額に一致します）</footer>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+"use strict";
+
+/* ---------- データ ---------- */
+const STORAGE_KEY = "daily-budget-data-v1";
+const SYNC_KEY = "daily-budget-sync-v1";
+const GIST_DESC = "daily-budget-calendar-data";
+const GIST_FILE = "kakeibo-data.json";
+
+const EXPENSE_CATS = ["食費","日用品","交通費","交際費","趣味・娯楽","医療・健康","衣服・美容","その他"];
+const SUB_CATS = ["住居","水道光熱","通信","サブスク","保険","その他固定費"];
+
+const defaultState = () => ({ income: 0, subs: [], expenses: [], updatedAt: 0 });
+let state = defaultState();
+
+function normalize(d) {
+  if (!d || typeof d !== "object") return null;
+  return {
+    income: Number(d.income) || 0,
+    subs: (Array.isArray(d.subs) ? d.subs : [])
+      .map(s => ({ ...s, cycle: s.cycle === "yearly" ? "yearly" : "monthly" })),
+    expenses: Array.isArray(d.expenses) ? d.expenses : [],
+    updatedAt: Number(d.updatedAt) || 0,
+  };
+}
+function readLocal() {
+  try { return normalize(JSON.parse(localStorage.getItem(STORAGE_KEY))); }
+  catch (e) { return null; }
+}
+function writeLocal() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+}
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
+/* ---------- Gist同期 ---------- */
+let syncCfg = { token: "", gistId: "" };
+function loadSyncCfg() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SYNC_KEY));
+    if (s && typeof s.token === "string") syncCfg = { token: s.token, gistId: s.gistId || "" };
+  } catch (e) {}
+}
+function saveSyncCfg() {
+  try { localStorage.setItem(SYNC_KEY, JSON.stringify(syncCfg)); } catch (e) {}
+}
+
+let cloudDirty = false;
+let pushTimer = null;
+let pushInFlight = false;
+let lastSyncedAt = 0;
+
+function setSync(mode, text) {
+  const chip = document.getElementById("sync-chip");
+  chip.className = "sync-chip " + mode;
+  document.getElementById("sync-text").textContent = text;
+  const note = document.getElementById("storage-note");
+  if (note) {
+    note.textContent = syncCfg.token
+      ? "データはこの端末と、あなたのGitHubアカウントの非公開Gistに保存されます。"
+      : "現在このブラウザ内にのみ保存されています。上の「端末間の同期」を設定すると、他の端末とデータを共有できます。";
+  }
+  const line = document.getElementById("sync-status-line");
+  if (line && syncCfg.token) {
+    line.textContent = lastSyncedAt
+      ? `同期中（最終同期: ${new Date(lastSyncedAt).toLocaleString("ja-JP")}）`
+      : "同期を設定済みです。";
+  }
+}
+
+async function gistFetch(path, opts = {}) {
+  const res = await fetch("https://api.github.com" + path, {
+    ...opts,
+    headers: {
+      "Accept": "application/vnd.github+json",
+      "Authorization": "Bearer " + syncCfg.token,
+      ...(opts.body ? { "Content-Type": "application/json" } : {}),
+    },
+  });
+  if (res.status === 401 || res.status === 403) throw new Error("unauthorized");
+  if (res.status === 404) throw new Error("notfound");
+  if (!res.ok) throw new Error("http_" + res.status);
+  return res;
+}
+
+// 同一アカウントのGistを探し、無ければ非公開Gistを新規作成する
+async function findOrCreateGist() {
+  for (let page = 1; page <= 3; page++) {
+    const res = await gistFetch(`/gists?per_page=100&page=${page}`);
+    const gists = await res.json();
+    const hit = gists.find(g => g.files && g.files[GIST_FILE]);
+    if (hit) return hit.id;
+    if (gists.length < 100) break;
+  }
+  const res = await gistFetch("/gists", {
+    method: "POST",
+    body: JSON.stringify({
+      description: GIST_DESC,
+      public: false,
+      files: { [GIST_FILE]: { content: JSON.stringify(state) } },
+    }),
+  });
+  return (await res.json()).id;
+}
+
+async function pullFromGist() {
+  if (!syncCfg.token || !syncCfg.gistId) return;
+  const res = await gistFetch("/gists/" + syncCfg.gistId);
+  const data = await res.json();
+  const f = data.files && data.files[GIST_FILE];
+  if (!f) return;
+  const content = f.truncated ? await (await fetch(f.raw_url)).text() : f.content;
+  const remote = normalize(JSON.parse(content));
+  if (!remote) return;
+  if (remote.updatedAt > state.updatedAt) {
+    state = remote;
+    writeLocal();
+    render();
+  } else if (state.updatedAt > remote.updatedAt) {
+    cloudDirty = true;
+    schedulePush(500);
+  }
+  lastSyncedAt = Date.now();
+}
+
+function schedulePush(delay = 1500) {
+  if (!syncCfg.token || !syncCfg.gistId) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushToGist, delay);
+  setSync("saving", "保存中…");
+}
+async function pushToGist() {
+  if (!syncCfg.token || !syncCfg.gistId || pushInFlight || !cloudDirty) return;
+  pushInFlight = true;
+  cloudDirty = false;
+  try {
+    await gistFetch("/gists/" + syncCfg.gistId, {
+      method: "PATCH",
+      body: JSON.stringify({ files: { [GIST_FILE]: { content: JSON.stringify(state) } } }),
+    });
+    lastSyncedAt = Date.now();
+    pushInFlight = false;
+    if (cloudDirty) schedulePush(800);
+    else setSync("synced", "同期済み（全端末で共有）");
+  } catch (err) {
+    pushInFlight = false;
+    cloudDirty = true;
+    if (err.message === "unauthorized") {
+      setSync("error", "同期エラー：トークンを確認");
+      toast("同期に失敗しました。トークンが無効になっていないか確認してください");
+    } else if (err.message === "notfound") {
+      // Gistが削除された場合は作り直す
+      try {
+        syncCfg.gistId = await findOrCreateGist();
+        saveSyncCfg();
+        schedulePush(500);
+      } catch (e2) { setSync("error", "同期エラー"); }
+    } else {
+      setSync("error", "同期エラー（後で再試行）");
+      schedulePush(15000);
+    }
+  }
+}
+
+async function startSyncFromUi(token) {
+  syncCfg.token = token.trim();
+  setSync("saving", "接続確認中…");
+  try {
+    syncCfg.gistId = await findOrCreateGist();
+    saveSyncCfg();
+    await pullFromGist();
+    setSync("synced", "同期済み（全端末で共有）");
+    toast("同期を有効にしました");
+  } catch (err) {
+    syncCfg = { token: "", gistId: "" };
+    saveSyncCfg();
+    setSync("", "この端末のみ（同期未設定）");
+    toast(err.message === "unauthorized"
+      ? "トークンが無効です。gist権限付きのトークンか確認してください"
+      : "接続できませんでした。通信環境を確認してもう一度お試しください");
+  }
+  renderSyncUi();
+}
+
+function renderSyncUi() {
+  const on = !!syncCfg.token;
+  document.getElementById("sync-off-ui").classList.toggle("hidden", on);
+  document.getElementById("sync-on-ui").classList.toggle("hidden", !on);
+}
+
+function persist() {
+  state.updatedAt = Date.now();
+  writeLocal();
+  cloudDirty = true;
+  if (syncCfg.token) schedulePush();
+}
+
+/* ---------- 通知 ---------- */
+let toastTimer = null;
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 3200);
+}
+
+/* ---------- ファイル保存（CSV・バックアップ） ---------- */
+function download(filename, text, mime) {
+  const blob = new Blob([text], { type: mime });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+const csvCell = v => `"${String(v).replaceAll('"', '""')}"`;
+
+/* ---------- 日付ユーティリティ ---------- */
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+const ymOf = dateStr => dateStr.slice(0, 7);
+function daysInMonth(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(y, m, 0).getDate();
+}
+function shiftMonth(ym, delta) {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+}
+const ymLabel = ym => `${ym.slice(0, 4)}年${Number(ym.slice(5, 7))}月`;
+const yen = n => Math.round(n).toLocaleString("ja-JP") + "円";
+const signedYen = n => (n >= 0 ? "+" : "−") + Math.abs(Math.round(n)).toLocaleString("ja-JP") + "円";
+
+/* ---------- 集計 ---------- */
+function activeSubs(ym) {
+  return state.subs.filter(s => s.start <= ym && (!s.end || ym <= s.end));
+}
+// 年払いは月額換算（年額÷12）
+const subMonthly = s => s.cycle === "yearly" ? s.amount / 12 : s.amount;
+const subAmountLabel = s => s.cycle === "yearly"
+  ? `${yen(s.amount)}／年（≒${yen(subMonthly(s))}／月）`
+  : `${yen(s.amount)}／月`;
+
+// その月の日別収支をまとめて計算する
+function computeMonth(ym) {
+  const n = daysInMonth(ym);
+  const subs = activeSubs(ym);
+  const fixedMonthly = subs.reduce((a, s) => a + subMonthly(s), 0);
+  const fixedDaily = fixedMonthly / n;
+  const incomeDaily = state.income / n;
+
+  const varByDay = new Array(n + 1).fill(0);
+  const expByDay = new Map();
+  for (const e of state.expenses) {
+    if (ymOf(e.date) !== ym) continue;
+    const day = Number(e.date.slice(8, 10));
+    varByDay[day] += e.amount;
+    if (!expByDay.has(day)) expByDay.set(day, []);
+    expByDay.get(day).push(e);
+  }
+
+  const days = [];
+  let cum = 0;
+  for (let d = 1; d <= n; d++) {
+    const variable = varByDay[d];
+    const diff = incomeDaily - fixedDaily - variable;
+    cum += diff;
+    days.push({
+      day: d,
+      date: `${ym}-${String(d).padStart(2,"0")}`,
+      variable, fixed: fixedDaily, income: incomeDaily,
+      total: fixedDaily + variable,
+      diff, cum,
+      expenses: expByDay.get(d) || [],
+    });
+  }
+  const variableTotal = days.reduce((a, d) => a + d.variable, 0);
+  return { ym, n, days, subs, fixedMonthly, fixedDaily, incomeDaily,
+           variableTotal, expenseTotal: fixedMonthly + variableTotal,
+           diffTotal: state.income - fixedMonthly - variableTotal };
+}
+
+/* ---------- 画面状態 ---------- */
+let viewYm = ymOf(todayStr());
+let currentView = "daily";
+const openDays = new Set(); // 明細を開いている日
+let confirmingSubId = null; // 削除確認中の固定費
+let editingSubId = null;    // 編集中の固定費
+
+const $ = sel => document.querySelector(sel);
+
+function switchView(name) {
+  currentView = name;
+  document.querySelectorAll("nav.tabs button").forEach(b =>
+    b.classList.toggle("active", b.dataset.view === name));
+  ["daily","summary","charts","settings"].forEach(v =>
+    $("#view-" + v).classList.toggle("hidden", v !== name));
+  render();
+}
+
+function render() {
+  $("#month-label").textContent = ymLabel(viewYm);
+  const m = computeMonth(viewYm);
+  if (currentView === "daily") renderDaily(m);
+  else if (currentView === "summary") renderSummary(m);
+  else if (currentView === "charts") renderCharts(m);
+  else renderSettings();
+}
+
+/* ---------- 日別一覧 ---------- */
+function tile(label, value, cls, hint) {
+  const t = document.createElement("div");
+  t.className = "tile";
+  const l = document.createElement("div"); l.className = "label"; l.textContent = label;
+  const v = document.createElement("div"); v.className = "value" + (cls ? " " + cls : ""); v.textContent = value;
+  t.append(l, v);
+  if (hint) { const h = document.createElement("div"); h.className = "hint"; h.textContent = hint; t.append(h); }
+  return t;
+}
+
+function renderDaily(m) {
+  const tiles = $("#daily-tiles");
+  tiles.textContent = "";
+  const today = todayStr();
+  const budgetDaily = m.incomeDaily - m.fixedDaily; // 1日に使える変動費の目安
+
+  if (viewYm === ymOf(today)) {
+    const d = m.days[Number(today.slice(8,10)) - 1];
+    tiles.append(
+      tile("今日の変動費", yen(d.variable)),
+      tile("今日の収支", signedYen(d.diff), d.diff >= 0 ? "pos" : "neg"),
+      tile("今日までの累計収支", signedYen(d.cum), d.cum >= 0 ? "pos" : "neg"),
+      tile("1日に使える目安", yen(budgetDaily), null, "収入(日割) − 固定費(日割)"),
+    );
+  } else {
+    tiles.append(
+      tile("この月の変動費", yen(m.variableTotal)),
+      tile("この月の収支", signedYen(m.diffTotal), m.diffTotal >= 0 ? "pos" : "neg"),
+      tile("固定費（月額）", yen(m.fixedMonthly)),
+      tile("1日に使える目安", yen(budgetDaily), null, "収入(日割) − 固定費(日割)"),
+    );
+  }
+
+  const tbody = $("#daily-table tbody");
+  tbody.textContent = "";
+  for (const d of m.days) {
+    const tr = document.createElement("tr");
+    tr.className = "day-row";
+    if (d.date === today) tr.classList.add("today");
+    if (d.date > today) tr.classList.add("future");
+    const cells = [
+      `${d.day}日（${"日月火水木金土"[new Date(d.date + "T00:00:00").getDay()]}）`,
+      yen(d.variable), yen(d.fixed), yen(d.total), yen(d.income),
+      signedYen(d.diff), signedYen(d.cum),
+    ];
+    cells.forEach((text, i) => {
+      const td = document.createElement("td");
+      td.textContent = text;
+      if (i === 5) td.classList.add(d.diff >= 0 ? "pos" : "neg");
+      if (i === 6) td.classList.add(d.cum >= 0 ? "pos" : "neg");
+      tr.append(td);
+    });
+    tr.addEventListener("click", () => {
+      openDays.has(d.date) ? openDays.delete(d.date) : openDays.add(d.date);
+      render();
+    });
+    tbody.append(tr);
+
+    if (openDays.has(d.date)) {
+      const dtr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 7;
+      td.className = "detail-cell";
+      if (d.expenses.length === 0) {
+        const p = document.createElement("div"); p.className = "empty"; p.textContent = "この日の変動費の記録はありません";
+        td.append(p);
+      } else {
+        for (const e of d.expenses) {
+          const row = document.createElement("div");
+          row.className = "detail-item";
+          const amt = document.createElement("span"); amt.className = "amt"; amt.textContent = yen(e.amount);
+          const chip = document.createElement("span"); chip.className = "cat-chip"; chip.textContent = e.cat;
+          const memo = document.createElement("span"); memo.textContent = e.memo || "";
+          const del = document.createElement("button");
+          del.className = "btn small danger-text"; del.textContent = "削除";
+          del.addEventListener("click", ev => {
+            ev.stopPropagation();
+            state.expenses = state.expenses.filter(x => x.id !== e.id);
+            persist(); render();
+          });
+          row.append(amt, chip, memo, del);
+          td.append(row);
+        }
+      }
+      dtr.append(td);
+      tbody.append(dtr);
+    }
+  }
+}
+
+/* ---------- 月間サマリー ---------- */
+function renderSummary(m) {
+  const tiles = $("#summary-tiles");
+  tiles.textContent = "";
+  tiles.append(
+    tile("収入（月額）", yen(state.income)),
+    tile("固定費（月額）", yen(m.fixedMonthly)),
+    tile("変動費（記録分）", yen(m.variableTotal)),
+    tile("月間収支", signedYen(m.diffTotal), m.diffTotal >= 0 ? "pos" : "neg", "収入 − 固定費 − 変動費"),
+  );
+
+  // カテゴリ別（変動費は記録から、固定費は月額換算をカテゴリごとに合算）
+  const byCat = new Map();
+  for (const e of state.expenses) {
+    if (ymOf(e.date) !== m.ym) continue;
+    byCat.set(e.cat, (byCat.get(e.cat) || 0) + e.amount);
+  }
+  for (const s of m.subs) byCat.set(s.cat, (byCat.get(s.cat) || 0) + subMonthly(s));
+
+  const wrap = $("#category-bars");
+  wrap.textContent = "";
+  const entries = [...byCat.entries()].sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) {
+    const p = document.createElement("div"); p.className = "empty"; p.textContent = "この月の支出はまだありません";
+    wrap.append(p);
+  } else {
+    const max = entries[0][1];
+    for (const [cat, amount] of entries) {
+      const row = document.createElement("div"); row.className = "catbar-row";
+      const name = document.createElement("span"); name.className = "name"; name.textContent = cat;
+      const track = document.createElement("div"); track.className = "catbar-track";
+      const fill = document.createElement("div"); fill.className = "catbar-fill";
+      fill.style.width = (amount / max * 100) + "%";
+      track.append(fill);
+      const val = document.createElement("span"); val.className = "val"; val.textContent = yen(amount);
+      row.append(name, track, val);
+      wrap.append(row);
+    }
+  }
+
+  // 固定費一覧
+  $("#subs-summary-note").textContent =
+    m.subs.length ? `合計 ${yen(m.fixedMonthly)}／月 → ${yen(m.fixedDaily)}／日` : "";
+  const list = $("#subs-summary");
+  list.textContent = "";
+  if (m.subs.length === 0) {
+    const p = document.createElement("div"); p.className = "empty"; p.textContent = "この月に有効な固定費・サブスクはありません（設定タブから登録できます）";
+    list.append(p);
+  } else {
+    const ul = document.createElement("ul"); ul.className = "plain";
+    for (const s of [...m.subs].sort((a, b) => subMonthly(b) - subMonthly(a))) {
+      const li = document.createElement("li");
+      const grow = document.createElement("span"); grow.className = "grow"; grow.textContent = s.name;
+      const chip = document.createElement("span"); chip.className = "cat-chip"; chip.textContent = s.cat;
+      const amt = document.createElement("span"); amt.className = "amt"; amt.textContent = subAmountLabel(s);
+      const daily = document.createElement("span"); daily.className = "sub-meta"; daily.textContent = "≒ " + yen(subMonthly(s) / m.n) + "／日";
+      li.append(grow, chip, amt, daily);
+      ul.append(li);
+    }
+    list.append(ul);
+  }
+}
+
+/* ---------- グラフ ---------- */
+const SVG_NS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+function niceStep(maxVal) {
+  const raw = maxVal / 4;
+  const pow = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+  for (const m of [1, 2, 5, 10]) if (m * pow >= raw) return m * pow;
+  return 10 * pow;
+}
+function ttRow(tt, color, name, value) {
+  const row = document.createElement("div"); row.className = "tt-row";
+  if (color) { const k = document.createElement("span"); k.className = "tt-key"; k.style.background = color; row.append(k); }
+  const v = document.createElement("span"); v.className = "tt-val"; v.textContent = value;
+  const n = document.createElement("span"); n.className = "tt-name"; n.textContent = name;
+  row.append(v, n);
+  tt.append(row);
+}
+function moveTooltip(tt, card, clientX, clientY) {
+  const r = card.getBoundingClientRect();
+  let x = clientX - r.left + 14, y = clientY - r.top + 14;
+  tt.style.display = "block";
+  const w = tt.offsetWidth, h = tt.offsetHeight;
+  if (x + w > r.width - 8) x = clientX - r.left - w - 14;
+  if (y + h > r.height - 8) y = clientY - r.top - h - 14;
+  tt.style.left = Math.max(4, x) + "px";
+  tt.style.top = Math.max(4, y) + "px";
+}
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+// 積み上げ棒（固定費＋変動費）＋ 日割り収入の基準線
+function renderBarChart(m) {
+  const host = $("#chart-bars");
+  host.textContent = "";
+  const tt = $("#tt-bars");
+  tt.style.display = "none";
+
+  const W = 840, H = 300, padL = 64, padR = 12, padT = 16, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
+    "aria-label": "日別の支出（固定費と変動費の積み上げ）" });
+
+  const maxVal = Math.max(m.incomeDaily, ...m.days.map(d => d.total), 1000);
+  const step = niceStep(maxVal);
+  const yMax = Math.ceil(maxVal / step) * step;
+  const y = v => padT + plotH - (v / yMax) * plotH;
+  const slot = plotW / m.n;
+  const barW = Math.min(24, slot * 0.62);
+
+  // グリッドとY軸ラベル
+  for (let v = 0; v <= yMax; v += step) {
+    svg.append(svgEl("line", { x1: padL, x2: W - padR, y1: y(v), y2: y(v),
+      stroke: v === 0 ? css("--baseline") : css("--grid"), "stroke-width": 1 }));
+    const t = svgEl("text", { x: padL - 8, y: y(v) + 4, "text-anchor": "end",
+      fill: css("--text-muted"), "font-size": 11 });
+    t.textContent = v.toLocaleString("ja-JP");
+    svg.append(t);
+  }
+
+  // 日割り収入の基準線
+  if (m.incomeDaily > 0) {
+    const ly = y(m.incomeDaily);
+    svg.append(svgEl("line", { x1: padL, x2: W - padR, y1: ly, y2: ly,
+      stroke: css("--text-secondary"), "stroke-width": 1 }));
+    const t = svgEl("text", { x: W - padR, y: ly - 5, "text-anchor": "end",
+      fill: css("--text-secondary"), "font-size": 11 });
+    t.textContent = "収入(日割) " + yen(m.incomeDaily);
+    svg.append(t);
+  }
+
+  const GAP = 2; // 積み上げセグメント間のサーフェス色ギャップ
+  for (const d of m.days) {
+    const cx = padL + slot * (d.day - 0.5);
+    const x0 = cx - barW / 2;
+    const g = svgEl("g", { tabindex: 0 });
+
+    const fixedH = plotH * (d.fixed / yMax);
+    const varH = plotH * (d.variable / yMax);
+    const baseY = padT + plotH;
+
+    // 固定費（下段）
+    if (fixedH > 0.5) {
+      const topIsRounded = varH <= 0.5;
+      const r = Math.min(4, barW / 2, fixedH);
+      const yTop = baseY - fixedH;
+      const path = topIsRounded
+        ? `M${x0},${baseY} V${yTop + r} Q${x0},${yTop} ${x0 + r},${yTop} H${x0 + barW - r} Q${x0 + barW},${yTop} ${x0 + barW},${yTop + r} V${baseY} Z`
+        : `M${x0},${baseY} V${yTop} H${x0 + barW} V${baseY} Z`;
+      g.append(svgEl("path", { d: path, fill: css("--series-2") }));
+    }
+    // 変動費（上段・上端を角丸に）
+    if (varH > 0.5) {
+      const yBot = baseY - fixedH - (fixedH > 0.5 ? GAP : 0);
+      const h = Math.max(1, varH - (fixedH > 0.5 ? GAP : 0));
+      const yTop = yBot - h;
+      const r = Math.min(4, barW / 2, h);
+      g.append(svgEl("path", {
+        d: `M${x0},${yBot} V${yTop + r} Q${x0},${yTop} ${x0 + r},${yTop} H${x0 + barW - r} Q${x0 + barW},${yTop} ${x0 + barW},${yTop + r} V${yBot} Z`,
+        fill: css("--series-1") }));
+    }
+    // ヒットエリア（マークより大きく）
+    const hit = svgEl("rect", { x: padL + slot * (d.day - 1), y: padT, width: slot, height: plotH,
+      fill: "transparent" });
+    g.append(hit);
+
+    const show = (cx2, cy2) => {
+      tt.textContent = "";
+      const title = document.createElement("div"); title.className = "tt-title";
+      title.textContent = `${ymLabel(m.ym)}${d.day}日`;
+      tt.append(title);
+      ttRow(tt, css("--series-1"), "変動費", yen(d.variable));
+      ttRow(tt, css("--series-2"), "固定費(日割)", yen(d.fixed));
+      ttRow(tt, null, "支出計", yen(d.total));
+      moveTooltip(tt, host.closest(".chart-card"), cx2, cy2);
+    };
+    g.addEventListener("pointermove", ev => show(ev.clientX, ev.clientY));
+    g.addEventListener("pointerleave", () => tt.style.display = "none");
+    g.addEventListener("focus", () => {
+      const r2 = hit.getBoundingClientRect();
+      show(r2.left + r2.width / 2, r2.top + 20);
+    });
+    g.addEventListener("blur", () => tt.style.display = "none");
+    svg.append(g);
+  }
+
+  // X軸ラベル（5日ごと）
+  for (let d = 1; d <= m.n; d++) {
+    if (d === 1 || d % 5 === 0) {
+      const t = svgEl("text", { x: padL + slot * (d - 0.5), y: H - 8, "text-anchor": "middle",
+        fill: css("--text-muted"), "font-size": 11 });
+      t.textContent = d;
+      svg.append(t);
+    }
+  }
+  host.append(svg);
+}
+
+// 累計収支の折れ線
+function renderLineChart(m) {
+  const host = $("#chart-line");
+  host.textContent = "";
+  const tt = $("#tt-line");
+  tt.style.display = "none";
+
+  const W = 840, H = 300, padL = 72, padR = 12, padT = 16, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
+    "aria-label": "累計収支の推移" });
+
+  const vals = m.days.map(d => d.cum);
+  let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+  if (hi - lo < 1000) hi = lo + 1000;
+  const step = niceStep(hi - lo);
+  lo = Math.floor(lo / step) * step;
+  hi = Math.ceil(hi / step) * step;
+  const y = v => padT + plotH - ((v - lo) / (hi - lo)) * plotH;
+  const x = day => padL + plotW * ((day - 0.5) / m.n);
+
+  for (let v = lo; v <= hi; v += step) {
+    svg.append(svgEl("line", { x1: padL, x2: W - padR, y1: y(v), y2: y(v),
+      stroke: v === 0 ? css("--baseline") : css("--grid"), "stroke-width": 1 }));
+    const t = svgEl("text", { x: padL - 8, y: y(v) + 4, "text-anchor": "end",
+      fill: css("--text-muted"), "font-size": 11 });
+    t.textContent = v.toLocaleString("ja-JP");
+    svg.append(t);
+  }
+  for (let d = 1; d <= m.n; d++) {
+    if (d === 1 || d % 5 === 0) {
+      const t = svgEl("text", { x: x(d), y: H - 8, "text-anchor": "middle",
+        fill: css("--text-muted"), "font-size": 11 });
+      t.textContent = d;
+      svg.append(t);
+    }
+  }
+
+  const pts = m.days.map(d => `${x(d.day)},${y(d.cum)}`).join(" ");
+  svg.append(svgEl("polyline", { points: pts, fill: "none", stroke: css("--series-1"),
+    "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+
+  // 末尾のマーカーと直接ラベル
+  const last = m.days[m.n - 1];
+  svg.append(svgEl("circle", { cx: x(last.day), cy: y(last.cum), r: 4.5,
+    fill: css("--series-1"), stroke: css("--surface"), "stroke-width": 2 }));
+  const endT = svgEl("text", { x: x(last.day) - 6, y: y(last.cum) - 10, "text-anchor": "end",
+    fill: css("--text-secondary"), "font-size": 11, "font-weight": 600 });
+  endT.textContent = signedYen(last.cum);
+  svg.append(endT);
+
+  // クロスヘア＋ツールチップ
+  const cross = svgEl("line", { y1: padT, y2: padT + plotH, stroke: css("--baseline"),
+    "stroke-width": 1, visibility: "hidden" });
+  const dot = svgEl("circle", { r: 4.5, fill: css("--series-1"), stroke: css("--surface"),
+    "stroke-width": 2, visibility: "hidden" });
+  svg.append(cross, dot);
+
+  const overlay = svgEl("rect", { x: padL, y: padT, width: plotW, height: plotH, fill: "transparent" });
+  overlay.addEventListener("pointermove", ev => {
+    const box = svg.getBoundingClientRect();
+    const px = (ev.clientX - box.left) / box.width * W;
+    const day = Math.min(m.n, Math.max(1, Math.round((px - padL) / plotW * m.n + 0.5)));
+    const d = m.days[day - 1];
+    cross.setAttribute("x1", x(day)); cross.setAttribute("x2", x(day));
+    cross.setAttribute("visibility", "visible");
+    dot.setAttribute("cx", x(day)); dot.setAttribute("cy", y(d.cum));
+    dot.setAttribute("visibility", "visible");
+    tt.textContent = "";
+    const title = document.createElement("div"); title.className = "tt-title";
+    title.textContent = `${ymLabel(m.ym)}${day}日`;
+    tt.append(title);
+    ttRow(tt, css("--series-1"), "累計収支", signedYen(d.cum));
+    ttRow(tt, null, "この日の差分", signedYen(d.diff));
+    moveTooltip(tt, host.closest(".chart-card"), ev.clientX, ev.clientY);
+  });
+  overlay.addEventListener("pointerleave", () => {
+    cross.setAttribute("visibility", "hidden");
+    dot.setAttribute("visibility", "hidden");
+    tt.style.display = "none";
+  });
+  svg.append(overlay);
+  host.append(svg);
+}
+
+function renderCharts(m) {
+  renderBarChart(m);
+  renderLineChart(m);
+}
+
+/* ---------- 設定 ---------- */
+function updateSubFormMode() {
+  const s = editingSubId ? state.subs.find(x => x.id === editingSubId) : null;
+  if (!s) editingSubId = null;
+  $("#sub-submit").textContent = s ? "更新" : "登録";
+  $("#sub-cancel").classList.toggle("hidden", !s);
+  const note = $("#sub-edit-note");
+  note.textContent = s ? `「${s.name}」を編集中です。内容を変えて「更新」を押してください` : "";
+  note.classList.toggle("hidden", !s);
+}
+function startSubEdit(s) {
+  editingSubId = s.id;
+  confirmingSubId = null;
+  $("#sub-name").value = s.name;
+  $("#sub-cycle").value = s.cycle === "yearly" ? "yearly" : "monthly";
+  $("#sub-amount").value = s.amount;
+  $("#sub-cat").value = s.cat;
+  $("#sub-start").value = s.start;
+  $("#sub-end").value = s.end || "";
+  renderSettings();
+  $("#sub-form").scrollIntoView({ block: "center" });
+  $("#sub-name").focus();
+}
+function cancelSubEdit() {
+  editingSubId = null;
+  $("#sub-name").value = ""; $("#sub-amount").value = ""; $("#sub-end").value = "";
+  renderSettings();
+}
+function renderSettings() {
+  $("#income-amount").value = state.income || "";
+  renderSyncUi();
+  updateSubFormMode();
+  const list = $("#sub-list");
+  list.textContent = "";
+  if (state.subs.length === 0) {
+    const p = document.createElement("li"); p.className = "empty"; p.textContent = "まだ登録がありません";
+    list.append(p);
+    return;
+  }
+  for (const s of [...state.subs].sort((a, b) => subMonthly(b) - subMonthly(a))) {
+    const li = document.createElement("li");
+    if (confirmingSubId === s.id) {
+      const q = document.createElement("span"); q.className = "grow"; q.textContent = `「${s.name}」を削除しますか？`;
+      const yes = document.createElement("button");
+      yes.className = "btn small danger-text"; yes.textContent = "削除する";
+      yes.addEventListener("click", () => {
+        confirmingSubId = null;
+        if (editingSubId === s.id) editingSubId = null;
+        state.subs = state.subs.filter(x => x.id !== s.id);
+        persist(); render();
+        toast(`「${s.name}」を削除しました`);
+      });
+      const no = document.createElement("button");
+      no.className = "btn small"; no.textContent = "キャンセル";
+      no.addEventListener("click", () => { confirmingSubId = null; renderSettings(); });
+      li.append(q, yes, no);
+    } else {
+      const grow = document.createElement("span"); grow.className = "grow"; grow.textContent = s.name;
+      const chip = document.createElement("span"); chip.className = "cat-chip"; chip.textContent = s.cat;
+      const amt = document.createElement("span"); amt.className = "amt"; amt.textContent = subAmountLabel(s);
+      const meta = document.createElement("span"); meta.className = "sub-meta";
+      meta.textContent = s.start.replace("-", "/") + " 〜 " + (s.end ? s.end.replace("-", "/") : "");
+      const edit = document.createElement("button");
+      edit.className = "btn small"; edit.textContent = "編集";
+      edit.addEventListener("click", () => startSubEdit(s));
+      const del = document.createElement("button");
+      del.className = "btn small danger-text"; del.textContent = "削除";
+      del.addEventListener("click", () => { confirmingSubId = s.id; renderSettings(); });
+      li.append(grow, chip, amt, meta, edit, del);
+    }
+    list.append(li);
+  }
+}
+
+/* ---------- CSV / バックアップ ---------- */
+function exportDailyCsv() {
+  const m = computeMonth(viewYm);
+  const rows = [["日付","変動費","固定費(日割)","支出計","収入(日割)","差分","累計差分"]];
+  for (const d of m.days) {
+    rows.push([d.date, Math.round(d.variable), Math.round(d.fixed), Math.round(d.total),
+      Math.round(d.income), Math.round(d.diff), Math.round(d.cum)]);
+  }
+  const text = "﻿" + rows.map(r => r.map(csvCell).join(",")).join("\r\n");
+  download(`日別収支_${viewYm}.csv`, text, "text/csv");
+}
+function exportExpensesCsv() {
+  const rows = [["日付","金額","カテゴリ","メモ"]];
+  for (const e of [...state.expenses].sort((a, b) => a.date.localeCompare(b.date))) {
+    rows.push([e.date, e.amount, e.cat, e.memo || ""]);
+  }
+  const text = "﻿" + rows.map(r => r.map(csvCell).join(",")).join("\r\n");
+  download("支出明細_全期間.csv", text, "text/csv");
+}
+
+/* ---------- 初期化 ---------- */
+function fillSelect(sel, cats) {
+  for (const c of cats) {
+    const o = document.createElement("option");
+    o.value = c; o.textContent = c;
+    sel.append(o);
+  }
+}
+
+let pendingImport = null;
+
+function initUi() {
+  fillSelect($("#exp-cat"), EXPENSE_CATS);
+  fillSelect($("#sub-cat"), SUB_CATS);
+  $("#exp-date").value = todayStr();
+  $("#sub-start").value = ymOf(todayStr());
+
+  document.querySelectorAll("nav.tabs button").forEach(b =>
+    b.addEventListener("click", () => switchView(b.dataset.view)));
+  $("#prev-month").addEventListener("click", () => { viewYm = shiftMonth(viewYm, -1); render(); });
+  $("#next-month").addEventListener("click", () => { viewYm = shiftMonth(viewYm, 1); render(); });
+  $("#this-month").addEventListener("click", () => { viewYm = ymOf(todayStr()); render(); });
+  $("#sync-chip").addEventListener("click", () => {
+    switchView("settings");
+    $("#sync-card").scrollIntoView({ block: "start" });
+  });
+
+  $("#expense-form").addEventListener("submit", ev => {
+    ev.preventDefault();
+    const date = $("#exp-date").value;
+    const amount = Number($("#exp-amount").value);
+    if (!date || !(amount > 0)) return;
+    state.expenses.push({ id: uid(), date, amount,
+      cat: $("#exp-cat").value, memo: $("#exp-memo").value.trim() });
+    persist();
+    $("#exp-amount").value = ""; $("#exp-memo").value = "";
+    viewYm = ymOf(date);
+    openDays.add(date);
+    render();
+  });
+
+  $("#income-form").addEventListener("submit", ev => {
+    ev.preventDefault();
+    state.income = Number($("#income-amount").value) || 0;
+    persist(); render();
+    toast("月収を保存しました");
+  });
+
+  $("#sub-form").addEventListener("submit", ev => {
+    ev.preventDefault();
+    const name = $("#sub-name").value.trim();
+    const amount = Number($("#sub-amount").value);
+    const start = $("#sub-start").value;
+    const end = $("#sub-end").value || null;
+    if (!name || !(amount > 0) || !start) return;
+    if (end && end < start) { toast("終了月は開始月以降にしてください"); return; }
+    const fields = { name, amount, cycle: $("#sub-cycle").value,
+      cat: $("#sub-cat").value, start, end };
+    if (editingSubId) {
+      const s = state.subs.find(x => x.id === editingSubId);
+      if (s) Object.assign(s, fields);
+      editingSubId = null;
+      toast(`「${name}」を更新しました`);
+    } else {
+      state.subs.push({ id: uid(), ...fields });
+      toast(`「${name}」を登録しました`);
+    }
+    persist();
+    $("#sub-name").value = ""; $("#sub-amount").value = ""; $("#sub-end").value = "";
+    render();
+  });
+  $("#sub-cancel").addEventListener("click", cancelSubEdit);
+  $("#sub-cycle").addEventListener("change", () => {
+    $("#sub-amount").placeholder =
+      $("#sub-cycle").value === "yearly" ? "12000（年額）" : "1490（月額）";
+  });
+
+  $("#sync-form").addEventListener("submit", ev => {
+    ev.preventDefault();
+    const token = $("#sync-token").value.trim();
+    if (!token) return;
+    $("#sync-token").value = "";
+    startSyncFromUi(token);
+  });
+  $("#sync-now").addEventListener("click", async () => {
+    setSync("saving", "同期中…");
+    try {
+      await pullFromGist();
+      if (cloudDirty) { schedulePush(200); }
+      else setSync("synced", "同期済み（全端末で共有）");
+      toast("同期しました");
+    } catch (e) {
+      setSync("error", "同期エラー");
+      toast("同期に失敗しました。通信環境とトークンを確認してください");
+    }
+  });
+  $("#sync-disable").addEventListener("click", () => {
+    syncCfg = { token: "", gistId: "" };
+    saveSyncCfg();
+    lastSyncedAt = 0;
+    setSync("", "この端末のみ（同期未設定）");
+    renderSyncUi();
+    toast("この端末の同期を解除しました");
+  });
+
+  $("#export-daily-csv").addEventListener("click", exportDailyCsv);
+  $("#export-expenses-csv").addEventListener("click", exportExpensesCsv);
+  $("#export-json").addEventListener("click", () =>
+    download(`家計簿バックアップ_${todayStr()}.json`, JSON.stringify(state, null, 2), "application/json"));
+  $("#import-json").addEventListener("click", () => $("#import-file").click());
+  $("#import-file").addEventListener("change", ev => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const d = (() => { try { return normalize(JSON.parse(reader.result)); } catch (e) { return null; } })();
+      if (!d) { toast("読み込めませんでした。バックアップのJSONファイルを選んでください"); }
+      else { pendingImport = d; $("#import-confirm").classList.remove("hidden"); }
+      ev.target.value = "";
+    };
+    reader.readAsText(file);
+  });
+  $("#import-yes").addEventListener("click", () => {
+    if (pendingImport) {
+      state = pendingImport;
+      pendingImport = null;
+      persist(); render();
+      toast("復元しました");
+    }
+    $("#import-confirm").classList.add("hidden");
+  });
+  $("#import-no").addEventListener("click", () => {
+    pendingImport = null;
+    $("#import-confirm").classList.add("hidden");
+  });
+
+  // テーマ切替時にグラフを描き直す
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => render());
+
+  // アプリに戻ってきたら最新データを取り込む
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && syncCfg.token) {
+      pullFromGist().catch(() => {});
+    }
+  });
+}
+
+async function boot() {
+  loadSyncCfg();
+  state = readLocal() || defaultState();
+  initUi();
+  switchView("daily");
+
+  if (syncCfg.token) {
+    setSync("saving", "同期中…");
+    try {
+      if (!syncCfg.gistId) { syncCfg.gistId = await findOrCreateGist(); saveSyncCfg(); }
+      await pullFromGist();
+      if (!cloudDirty) setSync("synced", "同期済み（全端末で共有）");
+    } catch (e) {
+      setSync("error", e.message === "unauthorized" ? "同期エラー：トークンを確認" : "同期エラー（オフライン？）");
+    }
+  } else {
+    setSync("", "この端末のみ（同期未設定）");
+  }
+
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+}
+boot();
+</script>
+</body>
+</html>
