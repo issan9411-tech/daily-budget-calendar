@@ -29,6 +29,7 @@
     --bad:            #d03b3b;
     --accent:         #2a78d6;
     --accent-wash:    rgba(42,120,214,0.08);
+    --ring-track:     #cde2fb;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -47,6 +48,7 @@
       --bad:            #e66767;
       --accent:         #3987e5;
       --accent-wash:    rgba(57,135,229,0.14);
+      --ring-track:     #1c3a5e;
     }
   }
   * { box-sizing: border-box; }
@@ -170,6 +172,38 @@
   .legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; flex-wrap: wrap; }
   .legend .key { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; }
 
+  /* 記録ページ */
+  .quick-hero { display: flex; gap: 24px; align-items: center; justify-content: center; flex-wrap: wrap; }
+  .ring-wrap { position: relative; width: min(230px, 62vw); }
+  .ring-svg { width: 100%; height: auto; display: block; }
+  .ring-center {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; pointer-events: none;
+  }
+  .ring-label { font-size: 12px; color: var(--text-secondary); }
+  .ring-value { font-size: 32px; font-weight: 650; line-height: 1.25; }
+  .ring-value.neg { color: var(--bad); }
+  .ring-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; max-width: 9em; }
+  .quick-stats { flex: 1; min-width: 13em; max-width: 17em; }
+  .qstat { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--grid); padding: 7px 0; font-size: 13px; }
+  .qstat:last-child { border-bottom: none; }
+  .qstat .label { color: var(--text-secondary); }
+  .qstat .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .q-amount-row { display: flex; align-items: baseline; gap: 6px; margin-bottom: 12px; }
+  #q-amount { font-size: 30px; font-weight: 600; width: 100%; max-width: 8em; padding: 8px 12px; text-align: right; }
+  .q-yen { font-size: 18px; color: var(--text-secondary); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip-btn {
+    appearance: none; border: 1px solid var(--baseline); background: var(--surface);
+    color: var(--text-primary); border-radius: 999px; padding: 6px 14px; font-size: 14px;
+    cursor: pointer; font-family: inherit;
+  }
+  .chip-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .chip-btn.selected { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .q-sub-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .q-sub-row input[type="text"] { flex: 1; min-width: 8em; }
+  .q-add { width: 100%; margin-top: 14px; padding: 12px; font-size: 16px; }
+
   .settings-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .confirm-strip {
     display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
@@ -212,11 +246,53 @@
   </div>
 
   <nav class="tabs" role="tablist">
-    <button data-view="daily" class="active">日別一覧</button>
+    <button data-view="quick" class="active">記録</button>
+    <button data-view="daily">日別一覧</button>
     <button data-view="summary">月間サマリー</button>
     <button data-view="charts">グラフ</button>
     <button data-view="settings">設定</button>
   </nav>
+
+  <!-- ============ 記録（クイック入力） ============ -->
+  <section id="view-quick">
+    <div class="card quick-hero">
+      <div class="ring-wrap">
+        <svg id="today-ring" viewBox="0 0 200 200" class="ring-svg" role="img" aria-label="今日の残り予算"></svg>
+        <div class="ring-center">
+          <div class="ring-label" id="ring-label">今日あと使える</div>
+          <div class="ring-value" id="ring-value">—</div>
+          <div class="ring-sub" id="ring-sub"></div>
+        </div>
+      </div>
+      <div class="quick-stats">
+        <div class="qstat"><span class="label">今日の変動費</span><span class="val" id="q-spent">—</span></div>
+        <div class="qstat"><span class="label">今日までの累計収支</span><span class="val" id="q-cum">—</span></div>
+        <div class="qstat"><span class="label">今月の変動費</span><span class="val" id="q-month-var">—</span></div>
+        <div class="qstat"><span class="label">固定費（日割り）</span><span class="val" id="q-fixed">—</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>支出を記録</h2>
+      <form id="quick-form">
+        <div class="q-amount-row">
+          <input type="number" id="q-amount" inputmode="numeric" min="1" step="1" placeholder="0" required aria-label="金額（円）">
+          <span class="q-yen">円</span>
+        </div>
+        <div class="chips" id="q-cats" role="radiogroup" aria-label="カテゴリ"></div>
+        <div class="q-sub-row">
+          <input type="date" id="q-date" aria-label="日付">
+          <input type="text" id="q-memo" placeholder="メモ（任意）">
+        </div>
+        <button type="submit" class="btn primary q-add">追加する</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>この日の記録<span class="note" id="q-list-note"></span></h2>
+      <ul class="plain" id="q-list"></ul>
+    </div>
+  </section>
 
   <!-- ============ 日別一覧 ============ -->
   <section id="view-daily">
@@ -761,18 +837,110 @@ function switchView(name) {
   currentView = name;
   document.querySelectorAll("nav.tabs button").forEach(b =>
     b.classList.toggle("active", b.dataset.view === name));
-  ["daily","summary","charts","settings"].forEach(v =>
+  ["quick","daily","summary","charts","settings"].forEach(v =>
     $("#view-" + v).classList.toggle("hidden", v !== name));
   render();
 }
 
 function render() {
   $("#month-label").textContent = ymLabel(viewYm);
+  if (currentView === "quick") { renderQuick(); return; }
   const m = computeMonth(viewYm);
   if (currentView === "daily") renderDaily(m);
   else if (currentView === "summary") renderSummary(m);
   else if (currentView === "charts") renderCharts(m);
   else renderSettings();
+}
+
+/* ---------- 記録（クイック入力） ---------- */
+let quickCat = EXPENSE_CATS[0];
+
+function drawRing(remaining, budget) {
+  const svg = $("#today-ring");
+  svg.textContent = "";
+  const R = 84, C = 2 * Math.PI * R;
+  const track = svgEl("circle", { cx: 100, cy: 100, r: R, fill: "none",
+    stroke: css("--ring-track"), "stroke-width": 14 });
+  svg.append(track);
+  if (budget > 0) {
+    const over = remaining < 0;
+    const frac = over ? 1 : Math.max(0, Math.min(1, remaining / budget));
+    if (frac > 0) {
+      const arc = svgEl("circle", { cx: 100, cy: 100, r: R, fill: "none",
+        stroke: over ? css("--bad") : css("--accent"),
+        "stroke-width": 14, "stroke-linecap": "round",
+        "stroke-dasharray": `${C * frac} ${C}`,
+        transform: "rotate(-90 100 100)" });
+      svg.append(arc);
+    }
+  }
+}
+
+function renderQuick() {
+  const today = todayStr();
+  const m = computeMonth(ymOf(today));
+  const todayD = m.days[Number(today.slice(8, 10)) - 1];
+  const budget = m.incomeDaily - m.fixedDaily; // 1日に使える変動費の目安
+  const value = $("#ring-value"), label = $("#ring-label"), sub = $("#ring-sub");
+
+  if (!todayD.active) {
+    drawRing(0, 0);
+    label.textContent = "記録開始前";
+    value.textContent = "—";
+    value.classList.remove("neg");
+    sub.textContent = `記録開始日: ${(m.startDate || "").replaceAll("-", "/")}`;
+  } else if (budget <= 0) {
+    drawRing(0, 0);
+    label.textContent = "今日あと使える";
+    value.textContent = "—";
+    value.classList.remove("neg");
+    sub.textContent = "設定タブで月収を登録すると表示されます";
+  } else {
+    const remaining = budget - todayD.variable;
+    drawRing(remaining, budget);
+    label.textContent = remaining >= 0 ? "今日あと使える" : "今日の予算オーバー";
+    value.textContent = yen(Math.abs(remaining));
+    value.classList.toggle("neg", remaining < 0);
+    sub.textContent = `1日の目安 ${yen(budget)}`;
+  }
+
+  $("#q-spent").textContent = todayD.active ? yen(todayD.variable) : "—";
+  const cumEl = $("#q-cum");
+  if (todayD.active && todayD.counted) {
+    cumEl.textContent = signedYen(todayD.cum);
+    cumEl.className = "val " + (todayD.cum >= 0 ? "pos" : "neg");
+  } else {
+    cumEl.textContent = "—";
+    cumEl.className = "val";
+  }
+  $("#q-month-var").textContent = yen(m.variableTotal);
+  $("#q-fixed").textContent = yen(m.fixedDaily) + "／日";
+
+  // 選択中の日付の記録一覧
+  const date = $("#q-date").value || today;
+  $("#q-list-note").textContent = date === today ? "今日" : date.replaceAll("-", "/");
+  const list = $("#q-list");
+  list.textContent = "";
+  const items = state.expenses.filter(e => e.date === date);
+  if (items.length === 0) {
+    const p = document.createElement("li"); p.className = "empty"; p.textContent = "まだ記録がありません";
+    list.append(p);
+    return;
+  }
+  for (const e of items) {
+    const li = document.createElement("li");
+    const amt = document.createElement("span"); amt.className = "amt"; amt.textContent = yen(e.amount);
+    const chip = document.createElement("span"); chip.className = "cat-chip"; chip.textContent = e.cat;
+    const memo = document.createElement("span"); memo.className = "grow sub-meta"; memo.textContent = e.memo || "";
+    const del = document.createElement("button");
+    del.className = "btn small danger-text"; del.textContent = "削除";
+    del.addEventListener("click", () => {
+      state.expenses = state.expenses.filter(x => x.id !== e.id);
+      persist(); render();
+    });
+    li.append(amt, chip, memo, del);
+    list.append(li);
+  }
 }
 
 /* ---------- 日別一覧 ---------- */
@@ -1378,6 +1546,42 @@ function initUi() {
   fillSelect($("#sub-cat"), SUB_CATS);
   $("#exp-date").value = todayStr();
   $("#sub-start").value = ymOf(todayStr());
+  $("#q-date").value = todayStr();
+
+  // カテゴリチップ
+  const chipWrap = $("#q-cats");
+  for (const c of EXPENSE_CATS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip-btn" + (c === quickCat ? " selected" : "");
+    b.textContent = c;
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", c === quickCat ? "true" : "false");
+    b.addEventListener("click", () => {
+      quickCat = c;
+      chipWrap.querySelectorAll(".chip-btn").forEach(x => {
+        const on = x.textContent === c;
+        x.classList.toggle("selected", on);
+        x.setAttribute("aria-checked", on ? "true" : "false");
+      });
+    });
+    chipWrap.append(b);
+  }
+
+  $("#quick-form").addEventListener("submit", ev => {
+    ev.preventDefault();
+    const amount = Number($("#q-amount").value);
+    const date = $("#q-date").value || todayStr();
+    if (!(amount > 0)) return;
+    state.expenses.push({ id: uid(), date, amount,
+      cat: quickCat, memo: $("#q-memo").value.trim() });
+    persist();
+    $("#q-amount").value = ""; $("#q-memo").value = "";
+    render();
+    toast(`${yen(amount)}（${quickCat}）を記録しました`);
+    $("#q-amount").focus();
+  });
+  $("#q-date").addEventListener("change", () => { if (currentView === "quick") render(); });
 
   document.querySelectorAll("nav.tabs button").forEach(b =>
     b.addEventListener("click", () => switchView(b.dataset.view)));
@@ -1541,7 +1745,7 @@ async function boot() {
   loadSyncCfg();
   state = readLocal() || defaultState();
   initUi();
-  switchView("daily");
+  switchView("quick");
 
   if (syncCfg.token) {
     setSync("saving", "同期中…");
