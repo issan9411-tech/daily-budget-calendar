@@ -131,6 +131,7 @@
   tr.today td { background: var(--accent-wash); }
   tr.future td { color: var(--text-muted); }
   tr.inactive td { color: var(--text-muted); }
+  tr.week-row td { background: var(--accent-wash); font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--baseline); }
   .range-note { grid-column: 1 / -1; color: var(--text-muted); font-size: 13px; padding: 4px 2px; }
   tr.day-row { cursor: pointer; }
   tr.day-row:hover td { background: var(--accent-wash); }
@@ -155,6 +156,14 @@
   .catbar-track { height: 14px; position: relative; }
   .catbar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--series-1); border-radius: 0 4px 4px 0; min-width: 2px; }
   .catbar-row .val { text-align: right; font-variant-numeric: tabular-nums; }
+  .budget-track { background: var(--ring-track); border-radius: 4px; }
+  .catbar-fill.over { background: var(--bad); }
+  .budget-subrow { display: grid; grid-template-columns: 7.5em 1fr; }
+  .budget-subrow .budget-sub { grid-column: 2; font-size: 11px; color: var(--text-muted); margin: -2px 0 6px; }
+  .budget-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .budget-grid .field { display: flex; flex-direction: column; gap: 2px; }
+  .budget-grid label { font-size: 12px; color: var(--text-secondary); }
+  .budget-grid input { width: 100%; }
 
   .chart-card { position: relative; }
   .chart-svg { display: block; width: 100%; height: auto; }
@@ -202,7 +211,19 @@
   .chip-btn.selected { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
   .q-sub-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
   .q-sub-row input[type="text"] { flex: 1; min-width: 8em; }
-  .q-add { width: 100%; margin-top: 14px; padding: 12px; font-size: 16px; }
+  .q-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; align-items: center; }
+  .q-add { flex: 1; min-width: 10em; padding: 12px; font-size: 16px; }
+  .seg { display: inline-flex; border: 1px solid var(--baseline); border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
+  .seg-btn {
+    appearance: none; border: none; background: var(--surface); color: var(--text-secondary);
+    padding: 6px 18px; font-size: 14px; cursor: pointer; font-family: inherit;
+  }
+  .seg-btn.selected { background: var(--accent); color: #fff; font-weight: 600; }
+  .tmpl-wrap { margin-bottom: 14px; }
+  .tmpl-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .tmpl-label { font-size: 12px; color: var(--text-secondary); }
+  .q-budget-hint { font-size: 13px; margin: 8px 0 0; color: var(--text-secondary); min-height: 1.2em; }
+  .q-budget-hint.over { color: var(--bad); font-weight: 600; }
 
   .settings-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .confirm-strip {
@@ -273,18 +294,34 @@
     </div>
 
     <div class="card">
-      <h2>支出を記録</h2>
+      <div class="seg" id="q-type" role="tablist" aria-label="記録の種類">
+        <button type="button" class="seg-btn selected" data-type="expense">支出</button>
+        <button type="button" class="seg-btn" data-type="income">臨時収入</button>
+      </div>
+      <div class="tmpl-wrap" id="tmpl-wrap">
+        <div class="tmpl-head">
+          <span class="tmpl-label">よく使う支出（タップで記録）</span>
+          <button type="button" class="btn small" id="tmpl-edit">編集</button>
+        </div>
+        <div class="chips" id="tmpl-chips"></div>
+      </div>
       <form id="quick-form">
         <div class="q-amount-row">
           <input type="number" id="q-amount" inputmode="numeric" min="1" step="1" placeholder="0" required aria-label="金額（円）">
           <span class="q-yen">円</span>
         </div>
         <div class="chips" id="q-cats" role="radiogroup" aria-label="カテゴリ"></div>
+        <p class="q-budget-hint" id="q-budget-hint"></p>
         <div class="q-sub-row">
           <input type="date" id="q-date" aria-label="日付">
           <input type="text" id="q-memo" placeholder="メモ（任意）">
         </div>
-        <button type="submit" class="btn primary q-add">追加する</button>
+        <p class="editing-note hidden" id="q-edit-note"></p>
+        <div class="q-actions">
+          <button type="submit" class="btn primary q-add" id="q-submit">追加する</button>
+          <button type="button" class="btn hidden" id="q-cancel">キャンセル</button>
+          <button type="button" class="btn" id="tmpl-save">テンプレに保存</button>
+        </div>
       </form>
     </div>
 
@@ -339,6 +376,10 @@
   <!-- ============ 月間サマリー ============ -->
   <section id="view-summary" class="hidden">
     <div class="tiles" id="summary-tiles"></div>
+    <div class="card hidden" id="budget-card">
+      <h2>予算の消化状況<span class="note">この月の変動費 ÷ カテゴリ別予算（設定タブで登録）</span></h2>
+      <div id="budget-bars"></div>
+    </div>
     <div class="card">
       <h2>カテゴリ別支出<span class="note">変動費＋固定費（月額）</span></h2>
       <div id="category-bars"></div>
@@ -364,6 +405,11 @@
       <h2>累計収支の推移<span class="note">その日までの「収入−支出」の積み上げ</span></h2>
       <div id="chart-line"></div>
       <div class="chart-tooltip" id="tt-line"></div>
+    </div>
+    <div class="card chart-card">
+      <h2>月別の収支<span class="note">表示中の月までの6か月。進行中の月は今日までの実績</span></h2>
+      <div id="chart-trend"></div>
+      <div class="chart-tooltip" id="tt-trend"></div>
     </div>
     <p class="empty">※ 数値の一覧は「日別一覧」タブで確認できます。</p>
   </section>
@@ -475,6 +521,14 @@
     </div>
 
     <div class="card">
+      <h2>カテゴリ別の予算<span class="note">任意。設定すると月間サマリーと記録画面に「あといくら使えるか」が表示されます</span></h2>
+      <form id="budget-form">
+        <div class="budget-grid" id="budget-fields"></div>
+        <button type="submit" class="btn primary" style="margin-top:12px;">予算を保存</button>
+      </form>
+    </div>
+
+    <div class="card">
       <h2>データ管理</h2>
       <div class="settings-actions">
         <button class="btn" id="export-daily-csv">日別収支をCSV出力（表示中の月）</button>
@@ -508,7 +562,8 @@ const GIST_FILE = "kakeibo-data.json";
 const EXPENSE_CATS = ["食費","日用品","交通費","交際費","趣味・娯楽","医療・健康","衣服・美容","その他"];
 const SUB_CATS = ["住居","水道光熱","通信","サブスク","保険","その他固定費"];
 
-const defaultState = () => ({ incomes: [], subs: [], expenses: [], startDate: null, updatedAt: 0 });
+const defaultState = () => ({ incomes: [], subs: [], expenses: [], extras: [],
+  templates: [], budgets: {}, startDate: null, updatedAt: 0 });
 let state = defaultState();
 
 function normalize(d) {
@@ -524,11 +579,21 @@ function normalize(d) {
     .filter(i => i.amount > 0);
   const startDate = (typeof d.startDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.startDate))
     ? d.startDate : null;
+  const budgets = {};
+  if (d.budgets && typeof d.budgets === "object") {
+    for (const k in d.budgets) {
+      const v = Number(d.budgets[k]);
+      if (v > 0) budgets[k] = v;
+    }
+  }
   return {
     incomes,
     subs: (Array.isArray(d.subs) ? d.subs : [])
       .map(s => ({ ...s, cycle: s.cycle === "yearly" ? "yearly" : "monthly" })),
     expenses: Array.isArray(d.expenses) ? d.expenses : [],
+    extras: Array.isArray(d.extras) ? d.extras : [],
+    templates: Array.isArray(d.templates) ? d.templates : [],
+    budgets,
     startDate,
     updatedAt: Number(d.updatedAt) || 0,
   };
@@ -782,44 +847,71 @@ function computeMonth(ym) {
     if (!expByDay.has(day)) expByDay.set(day, []);
     expByDay.get(day).push(e);
   }
+  // 臨時収入（ボーナス・フリマ売上など）はその日の収入として加算
+  const extraByDay = new Array(n + 1).fill(0);
+  const extraListByDay = new Map();
+  for (const x of state.extras) {
+    if (ymOf(x.date) !== ym) continue;
+    const day = Number(x.date.slice(8, 10));
+    extraByDay[day] += x.amount;
+    if (!extraListByDay.has(day)) extraListByDay.set(day, []);
+    extraListByDay.get(day).push(x);
+  }
 
   const days = [];
   let cum = 0, activeCount = 0, countedDays = 0;
-  let variableTotal = 0, variableAll = 0;
+  let variableTotal = 0, variableAll = 0, extrasCounted = 0, extrasAll = 0;
   for (let d = 1; d <= n; d++) {
     const date = `${ym}-${String(d).padStart(2,"0")}`;
     const variable = varByDay[d];
+    const extra = extraByDay[d];
     const active = !sd || date >= sd;
     const counted = active && date <= today; // 実績に含める日
     let diff = 0;
     if (active) {
       activeCount++;
       variableAll += variable;
-      diff = incomeDaily - fixedDaily - variable;
+      extrasAll += extra;
+      diff = incomeDaily + extra - fixedDaily - variable;
       if (counted) {
         countedDays++;
         variableTotal += variable;
+        extrasCounted += extra;
         cum += diff;
       }
     }
     days.push({
-      day: d, date, active, counted, variable,
+      day: d, date, active, counted, variable, extra,
       fixed: active ? fixedDaily : 0,
       income: active ? incomeDaily : 0,
       total: (active ? fixedDaily : 0) + variable,
       diff, cum: counted ? cum : null,
       expenses: expByDay.get(d) || [],
+      extras: extraListByDay.get(d) || [],
     });
   }
-  const incomeTotal = incomeDaily * countedDays;
+  const incomeTotal = incomeDaily * countedDays + extrasCounted;
   const fixedTotal = fixedDaily * countedDays;
   return { ym, n, days, subs, fixedMonthly, fixedDaily, incomeMonthly, incomeDaily,
            startDate: sd, activeCount, countedDays, variableTotal, variableAll,
+           extrasCounted, extrasAll,
            incomeTotal, fixedTotal,
            expenseTotal: fixedTotal + variableTotal,
            diffTotal: incomeTotal - fixedTotal - variableTotal,
-           // 月末見込み：その月の対象日すべての収入・固定費と、記録済みの支出（予定含む）で計算
-           projectedDiff: (incomeDaily - fixedDaily) * activeCount - variableAll };
+           // 月末見込み：その月の対象日すべての収入・固定費と、記録済みの支出・臨時収入で計算
+           projectedDiff: (incomeDaily - fixedDaily) * activeCount + extrasAll - variableAll };
+}
+
+// その月のカテゴリ別変動費（記録開始日以降の記録すべて）
+function variableByCategory(ym) {
+  const sd = state.startDate;
+  const byCat = new Map();
+  for (const e of state.expenses) {
+    if (ymOf(e.date) !== ym) continue;
+    if (sd && e.date < sd) continue;
+    byCat.set(e.cat, (byCat.get(e.cat) || 0) + e.amount);
+  }
+  return byCat;
 }
 
 /* ---------- 画面状態 ---------- */
@@ -854,6 +946,99 @@ function render() {
 
 /* ---------- 記録（クイック入力） ---------- */
 let quickCat = EXPENSE_CATS[0];
+let quickType = "expense";      // expense | income（臨時収入）
+let editingExpenseId = null;    // 編集中の支出
+let tmplEditMode = false;       // テンプレート編集（削除）モード
+
+function selectQuickCat(c) {
+  quickCat = c;
+  document.querySelectorAll("#q-cats .chip-btn").forEach(x => {
+    const on = x.textContent === c;
+    x.classList.toggle("selected", on);
+    x.setAttribute("aria-checked", on ? "true" : "false");
+  });
+  updateBudgetHint();
+}
+
+function updateBudgetHint() {
+  const el = $("#q-budget-hint");
+  const budget = state.budgets[quickCat];
+  if (quickType !== "expense" || !budget) { el.textContent = ""; el.classList.remove("over"); return; }
+  const spent = variableByCategory(ymOf(todayStr())).get(quickCat) || 0;
+  const left = budget - spent;
+  if (left >= 0) {
+    el.textContent = `${quickCat}：今月あと ${yen(left)}（予算 ${yen(budget)}）`;
+    el.classList.remove("over");
+  } else {
+    el.textContent = `${quickCat}：予算を ${yen(-left)} 超過しています（予算 ${yen(budget)}）`;
+    el.classList.add("over");
+  }
+}
+
+function updateQuickFormMode() {
+  const editing = editingExpenseId ? state.expenses.find(x => x.id === editingExpenseId) : null;
+  if (editingExpenseId && !editing) editingExpenseId = null;
+  const isExpense = quickType === "expense" || !!editing;
+  $("#q-type").classList.toggle("hidden", !!editing);
+  $("#q-cats").classList.toggle("hidden", !isExpense);
+  $("#q-budget-hint").classList.toggle("hidden", !isExpense);
+  $("#tmpl-save").classList.toggle("hidden", !isExpense || !!editing);
+  $("#tmpl-wrap").classList.toggle("hidden",
+    !isExpense || !!editing || (state.templates.length === 0 && !tmplEditMode));
+  $("#q-submit").textContent = editing ? "更新する" : (isExpense ? "追加する" : "収入を追加");
+  $("#q-cancel").classList.toggle("hidden", !editing);
+  const note = $("#q-edit-note");
+  note.textContent = editing ? "記録を編集中です。内容を変えて「更新する」を押してください" : "";
+  note.classList.toggle("hidden", !editing);
+}
+
+function startExpenseEdit(e) {
+  editingExpenseId = e.id;
+  quickType = "expense";
+  $("#q-amount").value = e.amount;
+  $("#q-date").value = e.date;
+  $("#q-memo").value = e.memo || "";
+  selectQuickCat(e.cat);
+  switchView("quick");
+  $("#q-amount").focus();
+}
+function cancelExpenseEdit() {
+  editingExpenseId = null;
+  $("#q-amount").value = ""; $("#q-memo").value = "";
+  $("#q-date").value = todayStr();
+  renderQuick();
+}
+
+function renderTemplates() {
+  const wrap = $("#tmpl-chips");
+  wrap.textContent = "";
+  $("#tmpl-edit").textContent = tmplEditMode ? "完了" : "編集";
+  if (state.templates.length === 0 && tmplEditMode) {
+    const p = document.createElement("span"); p.className = "tmpl-label";
+    p.textContent = "金額とカテゴリを入力して「テンプレに保存」を押すと登録できます";
+    wrap.append(p);
+    return;
+  }
+  for (const t of state.templates) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip-btn" + (tmplEditMode ? " danger-text" : "");
+    b.textContent = `${t.memo || t.cat} ${t.amount.toLocaleString("ja-JP")}円` + (tmplEditMode ? " ✕" : "");
+    b.addEventListener("click", () => {
+      if (tmplEditMode) {
+        state.templates = state.templates.filter(x => x.id !== t.id);
+        persist(); renderQuick();
+        toast("テンプレを削除しました");
+        return;
+      }
+      const date = $("#q-date").value || todayStr();
+      state.expenses.push({ id: uid(), date, amount: t.amount, cat: t.cat, memo: t.memo || "" });
+      persist(); render();
+      toast(`${yen(t.amount)}（${t.memo || t.cat}）を記録しました`);
+    });
+    wrap.append(b);
+  }
+}
 
 function drawRing(remaining, budget) {
   const svg = $("#today-ring");
@@ -916,29 +1101,52 @@ function renderQuick() {
   $("#q-month-var").textContent = yen(m.variableTotal);
   $("#q-fixed").textContent = yen(m.fixedDaily) + "／日";
 
-  // 選択中の日付の記録一覧
+  updateQuickFormMode();
+  updateBudgetHint();
+  renderTemplates();
+
+  // 選択中の日付の記録一覧（支出と臨時収入）
   const date = $("#q-date").value || today;
   $("#q-list-note").textContent = date === today ? "今日" : date.replaceAll("-", "/");
   const list = $("#q-list");
   list.textContent = "";
   const items = state.expenses.filter(e => e.date === date);
-  if (items.length === 0) {
+  const extraItems = state.extras.filter(x => x.date === date);
+  if (items.length === 0 && extraItems.length === 0) {
     const p = document.createElement("li"); p.className = "empty"; p.textContent = "まだ記録がありません";
     list.append(p);
     return;
+  }
+  for (const x of extraItems) {
+    const li = document.createElement("li");
+    const amt = document.createElement("span"); amt.className = "amt pos"; amt.textContent = "+" + yen(x.amount);
+    const chip = document.createElement("span"); chip.className = "cat-chip"; chip.textContent = "臨時収入";
+    const memo = document.createElement("span"); memo.className = "grow sub-meta"; memo.textContent = x.memo || "";
+    const del = document.createElement("button");
+    del.className = "btn small danger-text"; del.textContent = "削除";
+    del.addEventListener("click", () => {
+      state.extras = state.extras.filter(y => y.id !== x.id);
+      persist(); render();
+    });
+    li.append(amt, chip, memo, del);
+    list.append(li);
   }
   for (const e of items) {
     const li = document.createElement("li");
     const amt = document.createElement("span"); amt.className = "amt"; amt.textContent = yen(e.amount);
     const chip = document.createElement("span"); chip.className = "cat-chip"; chip.textContent = e.cat;
     const memo = document.createElement("span"); memo.className = "grow sub-meta"; memo.textContent = e.memo || "";
+    const edit = document.createElement("button");
+    edit.className = "btn small"; edit.textContent = "編集";
+    edit.addEventListener("click", () => startExpenseEdit(e));
     const del = document.createElement("button");
     del.className = "btn small danger-text"; del.textContent = "削除";
     del.addEventListener("click", () => {
+      if (editingExpenseId === e.id) editingExpenseId = null;
       state.expenses = state.expenses.filter(x => x.id !== e.id);
       persist(); render();
     });
-    li.append(amt, chip, memo, del);
+    li.append(amt, chip, memo, edit, del);
     list.append(li);
   }
 }
@@ -996,15 +1204,23 @@ function renderDaily(m) {
 
   const tbody = $("#daily-table tbody");
   tbody.textContent = "";
+  let weekVar = 0, weekTotal = 0, weekDiff = 0, weekCounted = 0, weekStart = null;
   for (const d of m.days) {
+    if (weekStart === null) weekStart = d.day;
+    if (d.active) {
+      weekVar += d.variable;
+      weekTotal += d.total;
+      if (d.counted) { weekDiff += d.diff; weekCounted++; }
+    }
     const tr = document.createElement("tr");
     tr.className = "day-row";
     if (d.date === today) tr.classList.add("today");
     if (d.date > today) tr.classList.add("future");
-    const label = `${d.day}日（${"日月火水木金土"[new Date(d.date + "T00:00:00").getDay()]}）`;
+    const dow = new Date(d.date + "T00:00:00").getDay();
+    const label = `${d.day}日（${"日月火水木金土"[dow]}）`;
     const cells = d.active ? [
       label,
-      yen(d.variable), yen(d.fixed), yen(d.total), yen(d.income),
+      yen(d.variable), yen(d.fixed), yen(d.total), yen(d.income + d.extra),
       signedYen(d.diff), d.counted ? signedYen(d.cum) : "—",
     ] : [
       label,
@@ -1030,29 +1246,74 @@ function renderDaily(m) {
       const td = document.createElement("td");
       td.colSpan = 7;
       td.className = "detail-cell";
-      if (d.expenses.length === 0) {
+      if (d.expenses.length === 0 && d.extras.length === 0) {
         const p = document.createElement("div"); p.className = "empty"; p.textContent = "この日の変動費の記録はありません";
         td.append(p);
       } else {
+        for (const x of d.extras) {
+          const row = document.createElement("div");
+          row.className = "detail-item";
+          const amt = document.createElement("span"); amt.className = "amt pos"; amt.textContent = "+" + yen(x.amount);
+          const chip = document.createElement("span"); chip.className = "cat-chip"; chip.textContent = "臨時収入";
+          const memo = document.createElement("span"); memo.textContent = x.memo || "";
+          const del = document.createElement("button");
+          del.className = "btn small danger-text"; del.textContent = "削除";
+          del.addEventListener("click", ev => {
+            ev.stopPropagation();
+            state.extras = state.extras.filter(y => y.id !== x.id);
+            persist(); render();
+          });
+          row.append(amt, chip, memo, del);
+          td.append(row);
+        }
         for (const e of d.expenses) {
           const row = document.createElement("div");
           row.className = "detail-item";
           const amt = document.createElement("span"); amt.className = "amt"; amt.textContent = yen(e.amount);
           const chip = document.createElement("span"); chip.className = "cat-chip"; chip.textContent = e.cat;
           const memo = document.createElement("span"); memo.textContent = e.memo || "";
+          const edit = document.createElement("button");
+          edit.className = "btn small"; edit.textContent = "編集";
+          edit.addEventListener("click", ev => {
+            ev.stopPropagation();
+            startExpenseEdit(e);
+          });
           const del = document.createElement("button");
           del.className = "btn small danger-text"; del.textContent = "削除";
           del.addEventListener("click", ev => {
             ev.stopPropagation();
+            if (editingExpenseId === e.id) editingExpenseId = null;
             state.expenses = state.expenses.filter(x => x.id !== e.id);
             persist(); render();
           });
-          row.append(amt, chip, memo, del);
+          row.append(amt, chip, memo, edit, del);
           td.append(row);
         }
       }
       dtr.append(td);
       tbody.append(dtr);
+    }
+
+    // 週の区切り（日曜または月末）で小計行を入れる
+    const isWeekEnd = new Date(d.date + "T00:00:00").getDay() === 0 || d.day === m.n;
+    if (isWeekEnd) {
+      if (m.activeCount > 0 && (weekVar > 0 || weekCounted > 0)) {
+        const wtr = document.createElement("tr");
+        wtr.className = "week-row";
+        const wcells = [
+          `${weekStart}日〜${d.day}日 週計`,
+          yen(weekVar), "", yen(weekTotal), "",
+          weekCounted > 0 ? signedYen(weekDiff) : "—", "",
+        ];
+        wcells.forEach((text, i) => {
+          const td2 = document.createElement("td");
+          td2.textContent = text;
+          if (i === 5 && weekCounted > 0) td2.classList.add(weekDiff >= 0 ? "pos" : "neg");
+          wtr.append(td2);
+        });
+        tbody.append(wtr);
+      }
+      weekVar = 0; weekTotal = 0; weekDiff = 0; weekCounted = 0; weekStart = null;
     }
   }
 }
@@ -1063,7 +1324,8 @@ function renderSummary(m) {
   tiles.textContent = "";
   const inProgress = m.countedDays < m.activeCount; // 今月または未来の月
   tiles.append(
-    tile("収入（月額）", yen(m.incomeMonthly)),
+    tile("収入（月額）", yen(m.incomeMonthly), null,
+      m.extrasAll > 0 ? `ほかに臨時収入 +${yen(m.extrasAll)}` : null),
     tile("固定費（月額）", yen(m.fixedMonthly)),
     tile("変動費（記録分）", yen(m.variableTotal)),
     tile(inProgress ? "現時点の収支" : "月間収支", signedYen(m.diffTotal),
@@ -1076,6 +1338,40 @@ function renderSummary(m) {
   }
   const note = rangeNote(m);
   if (note) tiles.append(note);
+
+  // 予算の消化状況（設定があるカテゴリのみ）
+  const budgetCats = Object.keys(state.budgets);
+  $("#budget-card").classList.toggle("hidden", budgetCats.length === 0);
+  if (budgetCats.length > 0) {
+    const varCat = variableByCategory(m.ym);
+    const bwrap = $("#budget-bars");
+    bwrap.textContent = "";
+    for (const cat of EXPENSE_CATS) {
+      const budget = state.budgets[cat];
+      if (!budget) continue;
+      const spent = varCat.get(cat) || 0;
+      const over = spent > budget;
+      const row = document.createElement("div"); row.className = "catbar-row";
+      const name = document.createElement("span"); name.className = "name"; name.textContent = cat;
+      const track = document.createElement("div"); track.className = "catbar-track budget-track";
+      const fill = document.createElement("div"); fill.className = "catbar-fill";
+      fill.style.width = Math.min(100, spent / budget * 100) + "%";
+      if (over) fill.classList.add("over");
+      if (spent <= 0) fill.style.display = "none";
+      track.append(fill);
+      const val = document.createElement("span"); val.className = "val";
+      val.textContent = over
+        ? `超過 ${yen(spent - budget)}`
+        : `あと ${yen(budget - spent)}`;
+      if (over) val.classList.add("neg");
+      const sub = document.createElement("span"); sub.className = "budget-sub";
+      sub.textContent = `${Math.round(spent).toLocaleString("ja-JP")} / ${budget.toLocaleString("ja-JP")}円`;
+      row.append(name, track, val);
+      const subRow = document.createElement("div"); subRow.className = "budget-subrow";
+      subRow.append(sub);
+      bwrap.append(row, subRow);
+    }
+  }
 
   // カテゴリ別（変動費は記録から、固定費は月額換算をカテゴリごとに合算）
   const byCat = new Map();
@@ -1358,9 +1654,94 @@ function renderLineChart(m) {
   host.append(svg);
 }
 
+// 月別の収支（表示中の月までの6か月）
+function roundedBarPath(x0, w, yBase, yEnd) {
+  const h = Math.abs(yBase - yEnd);
+  if (h < 0.5) return null;
+  const r = Math.min(4, w / 2, h);
+  if (yEnd <= yBase) {
+    return `M${x0},${yBase} V${yEnd + r} Q${x0},${yEnd} ${x0 + r},${yEnd} H${x0 + w - r} Q${x0 + w},${yEnd} ${x0 + w},${yEnd + r} V${yBase} Z`;
+  }
+  return `M${x0},${yBase} V${yEnd - r} Q${x0},${yEnd} ${x0 + r},${yEnd} H${x0 + w - r} Q${x0 + w},${yEnd} ${x0 + w},${yEnd - r} V${yBase} Z`;
+}
+
+function renderTrendChart() {
+  const host = $("#chart-trend");
+  host.textContent = "";
+  const tt = $("#tt-trend");
+  tt.style.display = "none";
+
+  const months = [];
+  for (let i = 5; i >= 0; i--) months.push(computeMonth(shiftMonth(viewYm, -i)));
+
+  const W = 840, H = 260, padL = 72, padR = 12, padT = 16, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
+    "aria-label": "月別の収支（6か月）" });
+
+  const vals = months.map(mm => mm.diffTotal);
+  let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+  if (hi - lo < 1000) hi = lo + 1000;
+  const step = niceStep(hi - lo);
+  lo = Math.floor(lo / step) * step;
+  hi = Math.ceil(hi / step) * step;
+  const y = v => padT + plotH - ((v - lo) / (hi - lo)) * plotH;
+
+  for (let v = lo; v <= hi; v += step) {
+    svg.append(svgEl("line", { x1: padL, x2: W - padR, y1: y(v), y2: y(v),
+      stroke: v === 0 ? css("--baseline") : css("--grid"), "stroke-width": 1 }));
+    const t = svgEl("text", { x: padL - 8, y: y(v) + 4, "text-anchor": "end",
+      fill: css("--text-muted"), "font-size": 11 });
+    t.textContent = v.toLocaleString("ja-JP");
+    svg.append(t);
+  }
+
+  const slot = plotW / months.length;
+  months.forEach((mm, i) => {
+    const cx = padL + slot * (i + 0.5);
+    const barW = Math.min(24, slot * 0.4);
+    const val = mm.diffTotal;
+    const path = roundedBarPath(cx - barW / 2, barW, y(0), y(val));
+    const g = svgEl("g", { tabindex: 0 });
+    if (path) {
+      g.append(svgEl("path", { d: path, fill: val >= 0 ? css("--series-1") : css("--bad") }));
+    }
+    const hit = svgEl("rect", { x: padL + slot * i, y: padT, width: slot, height: plotH,
+      fill: "transparent" });
+    g.append(hit);
+    const show = (cx2, cy2) => {
+      tt.textContent = "";
+      const title = document.createElement("div"); title.className = "tt-title";
+      title.textContent = ymLabel(mm.ym) + (mm.countedDays < mm.activeCount ? "（今日までの実績）" : "");
+      tt.append(title);
+      ttRow(tt, null, "収入（実績）", yen(mm.incomeTotal));
+      ttRow(tt, null, "固定費", yen(mm.fixedTotal));
+      ttRow(tt, null, "変動費", yen(mm.variableTotal));
+      ttRow(tt, val >= 0 ? css("--series-1") : css("--bad"), "収支", signedYen(val));
+      moveTooltip(tt, host.closest(".chart-card"), cx2, cy2);
+    };
+    g.addEventListener("pointermove", ev => show(ev.clientX, ev.clientY));
+    g.addEventListener("pointerleave", () => tt.style.display = "none");
+    g.addEventListener("focus", () => {
+      const r2 = hit.getBoundingClientRect();
+      show(r2.left + r2.width / 2, r2.top + 20);
+    });
+    g.addEventListener("blur", () => tt.style.display = "none");
+    svg.append(g);
+
+    const t = svgEl("text", { x: cx, y: H - 8, "text-anchor": "middle",
+      fill: css("--text-muted"), "font-size": 11 });
+    const monthNum = Number(mm.ym.slice(5));
+    t.textContent = (i === 0 || monthNum === 1) ? `${mm.ym.slice(2, 4)}年${monthNum}月` : `${monthNum}月`;
+    svg.append(t);
+  });
+  host.append(svg);
+}
+
 function renderCharts(m) {
   renderBarChart(m);
   renderLineChart(m);
+  renderTrendChart();
 }
 
 /* ---------- 設定 ---------- */
@@ -1462,6 +1843,8 @@ function renderIncomeList() {
 
 function renderSettings() {
   $("#start-date").value = state.startDate || "";
+  document.querySelectorAll(".budget-input").forEach(inp =>
+    inp.value = state.budgets[inp.dataset.cat] || "");
   renderSyncUi();
   updateIncomeFormMode();
   renderIncomeList();
@@ -1511,12 +1894,13 @@ function renderSettings() {
 /* ---------- CSV / バックアップ ---------- */
 function exportDailyCsv() {
   const m = computeMonth(viewYm);
-  const rows = [["日付","変動費","固定費(日割)","支出計","収入(日割)","差分","累計差分"]];
+  const rows = [["日付","変動費","固定費(日割)","支出計","収入(日割)","臨時収入","差分","累計差分"]];
   for (const d of m.days) {
     rows.push(d.active
       ? [d.date, Math.round(d.variable), Math.round(d.fixed), Math.round(d.total),
-         Math.round(d.income), Math.round(d.diff), d.counted ? Math.round(d.cum) : ""]
-      : [d.date, d.variable > 0 ? Math.round(d.variable) : "", "", "", "", "", ""]);
+         Math.round(d.income), d.extra ? Math.round(d.extra) : "",
+         Math.round(d.diff), d.counted ? Math.round(d.cum) : ""]
+      : [d.date, d.variable > 0 ? Math.round(d.variable) : "", "", "", "", "", "", ""]);
   }
   const text = "﻿" + rows.map(r => r.map(csvCell).join(",")).join("\r\n");
   download(`日別収支_${viewYm}.csv`, text, "text/csv");
@@ -1557,31 +1941,83 @@ function initUi() {
     b.textContent = c;
     b.setAttribute("role", "radio");
     b.setAttribute("aria-checked", c === quickCat ? "true" : "false");
-    b.addEventListener("click", () => {
-      quickCat = c;
-      chipWrap.querySelectorAll(".chip-btn").forEach(x => {
-        const on = x.textContent === c;
-        x.classList.toggle("selected", on);
-        x.setAttribute("aria-checked", on ? "true" : "false");
-      });
-    });
+    b.addEventListener("click", () => selectQuickCat(c));
     chipWrap.append(b);
   }
+
+  // 支出／臨時収入の切り替え
+  document.querySelectorAll("#q-type .seg-btn").forEach(b =>
+    b.addEventListener("click", () => {
+      quickType = b.dataset.type;
+      document.querySelectorAll("#q-type .seg-btn").forEach(x =>
+        x.classList.toggle("selected", x === b));
+      updateQuickFormMode();
+    }));
 
   $("#quick-form").addEventListener("submit", ev => {
     ev.preventDefault();
     const amount = Number($("#q-amount").value);
     const date = $("#q-date").value || todayStr();
+    const memo = $("#q-memo").value.trim();
     if (!(amount > 0)) return;
-    state.expenses.push({ id: uid(), date, amount,
-      cat: quickCat, memo: $("#q-memo").value.trim() });
+    if (editingExpenseId) {
+      const e = state.expenses.find(x => x.id === editingExpenseId);
+      if (e) Object.assign(e, { amount, date, cat: quickCat, memo });
+      editingExpenseId = null;
+      toast("記録を更新しました");
+    } else if (quickType === "income") {
+      state.extras.push({ id: uid(), date, amount, memo });
+      toast(`+${yen(amount)}（臨時収入）を記録しました`);
+    } else {
+      state.expenses.push({ id: uid(), date, amount, cat: quickCat, memo });
+      toast(`${yen(amount)}（${quickCat}）を記録しました`);
+    }
     persist();
     $("#q-amount").value = ""; $("#q-memo").value = "";
     render();
-    toast(`${yen(amount)}（${quickCat}）を記録しました`);
     $("#q-amount").focus();
   });
+  $("#q-cancel").addEventListener("click", cancelExpenseEdit);
   $("#q-date").addEventListener("change", () => { if (currentView === "quick") render(); });
+
+  // テンプレート
+  $("#tmpl-edit").addEventListener("click", () => {
+    tmplEditMode = !tmplEditMode;
+    renderQuick();
+  });
+  $("#tmpl-save").addEventListener("click", () => {
+    const amount = Number($("#q-amount").value);
+    if (!(amount > 0)) { toast("金額を入力してから「テンプレに保存」を押してください"); return; }
+    state.templates.push({ id: uid(), amount, cat: quickCat, memo: $("#q-memo").value.trim() });
+    persist();
+    $("#q-amount").value = ""; $("#q-memo").value = "";
+    renderQuick();
+    toast("テンプレに保存しました。次からワンタップで記録できます");
+  });
+
+  // カテゴリ別予算の入力欄
+  const bf = $("#budget-fields");
+  for (const c of EXPENSE_CATS) {
+    const f = document.createElement("div"); f.className = "field";
+    const l = document.createElement("label"); l.textContent = c;
+    const inp = document.createElement("input");
+    inp.type = "number"; inp.min = "0"; inp.step = "1"; inp.placeholder = "未設定";
+    inp.className = "budget-input"; inp.dataset.cat = c;
+    inp.setAttribute("aria-label", c + "の月間予算（円）");
+    f.append(l, inp);
+    bf.append(f);
+  }
+  $("#budget-form").addEventListener("submit", ev => {
+    ev.preventDefault();
+    const budgets = {};
+    document.querySelectorAll(".budget-input").forEach(inp => {
+      const v = Number(inp.value);
+      if (v > 0) budgets[inp.dataset.cat] = v;
+    });
+    state.budgets = budgets;
+    persist(); render();
+    toast("予算を保存しました");
+  });
 
   document.querySelectorAll("nav.tabs button").forEach(b =>
     b.addEventListener("click", () => switchView(b.dataset.view)));
