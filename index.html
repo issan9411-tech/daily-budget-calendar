@@ -225,6 +225,30 @@
   .q-budget-hint { font-size: 13px; margin: 8px 0 0; color: var(--text-secondary); min-height: 1.2em; }
   .q-budget-hint.over { color: var(--bad); font-weight: 600; }
 
+  /* 固定費一覧（カード型2行レイアウト） */
+  .sub-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 14px; }
+  .sub-count { font-size: 12px; color: var(--text-muted); }
+  .bulk-bar {
+    border: 1px solid var(--accent); border-radius: 10px; padding: 10px 12px; margin-top: 10px;
+    display: flex; flex-direction: column; gap: 10px; background: var(--accent-wash);
+  }
+  .bulk-head { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .bulk-all { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+  .bulk-all input { width: 17px; height: 17px; accent-color: var(--accent); }
+  .bulk-count { font-size: 13px; font-weight: 600; }
+  .bulk-actions { display: flex; gap: 8px 14px; flex-wrap: wrap; align-items: center; }
+  .bulk-group { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .sub-item { display: flex; gap: 10px; align-items: flex-start; }
+  .sub-check { width: 18px; height: 18px; margin-top: 5px; flex: none; accent-color: var(--accent); }
+  .sub-main { flex: 1; min-width: 0; }
+  .sub-line1 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .sub-name { font-weight: 600; }
+  .cat-chip.cycle { border-color: var(--accent); color: var(--accent); }
+  .cat-chip.ended { color: var(--text-muted); }
+  .sub-line2 { display: flex; gap: 4px 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); margin-top: 2px; align-items: baseline; }
+  .sub-amt-main { font-size: 15px; font-weight: 650; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .sub-actions { display: flex; gap: 6px; flex: none; }
+
   .settings-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .confirm-strip {
     display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
@@ -246,6 +270,25 @@
   @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
   .hidden { display: none !important; }
   footer.app { color: var(--text-muted); font-size: 12px; margin-top: 24px; }
+
+  /* スマホ向け調整 */
+  @media (max-width: 520px) {
+    .wrap { padding: 12px 12px 56px; }
+    header.app .sub { display: none; }
+    form.row { row-gap: 10px; }
+    form.row .field { flex: 1 1 calc(50% - 8px); min-width: 0; }
+    form.row .field input, form.row .field select { width: 100%; }
+    form.row > .btn { flex: 1 1 100%; padding: 10px; }
+    .q-amount-row #q-amount { max-width: none; }
+    .quick-stats { max-width: none; }
+    th, td { padding: 6px 7px; font-size: 13px; }
+    .tile .value { font-size: 19px; }
+    .catbar-row { grid-template-columns: 5.5em 1fr 5.5em; }
+    .budget-subrow { grid-template-columns: 5.5em 1fr; }
+    .sub-actions { flex-direction: column; }
+    .bulk-group { width: 100%; }
+    .bulk-group select, .bulk-group input { flex: 1; }
+  }
 </style>
 </head>
 <body>
@@ -516,7 +559,36 @@
         <button type="button" class="btn hidden" id="sub-cancel">キャンセル</button>
       </form>
       <p class="editing-note hidden" id="sub-edit-note"></p>
-      <ul class="plain" id="sub-list" style="margin-top:12px;"></ul>
+
+      <div class="sub-toolbar">
+        <span class="sub-count" id="sub-count-note"></span>
+        <button type="button" class="btn small" id="sub-select-toggle">複数選択</button>
+      </div>
+      <div class="bulk-bar hidden" id="sub-bulk">
+        <div class="bulk-head">
+          <label class="bulk-all"><input type="checkbox" id="sub-select-all">すべて選択</label>
+          <span class="bulk-count" id="bulk-count"></span>
+        </div>
+        <div class="bulk-actions">
+          <div class="bulk-group">
+            <select id="bulk-cat" aria-label="変更先カテゴリ"></select>
+            <button type="button" class="btn small" id="bulk-cat-apply">カテゴリ変更</button>
+          </div>
+          <div class="bulk-group">
+            <input type="month" id="bulk-end" aria-label="終了月">
+            <button type="button" class="btn small" id="bulk-end-apply">終了月を設定</button>
+            <button type="button" class="btn small" id="bulk-end-clear">終了月を解除</button>
+          </div>
+          <button type="button" class="btn small danger-text" id="bulk-delete">選択した項目を削除</button>
+        </div>
+        <div class="confirm-strip hidden" id="bulk-del-confirm">
+          <span id="bulk-del-msg"></span>
+          <button type="button" class="btn small danger-text" id="bulk-del-yes">削除する</button>
+          <button type="button" class="btn small" id="bulk-del-no">キャンセル</button>
+        </div>
+      </div>
+
+      <ul class="plain" id="sub-list" style="margin-top:6px;"></ul>
       <p class="empty">解約したサブスクは、削除ではなく「終了月」を設定すると過去の月の計算が保たれます。</p>
     </div>
 
@@ -576,7 +648,7 @@ const GIST_DESC = "daily-budget-calendar-data";
 const GIST_FILE = "kakeibo-data.json";
 
 const EXPENSE_CATS = ["食費","日用品","交通費","交際費","趣味・娯楽","医療・健康","衣服・美容","その他"];
-const SUB_CATS = ["住居","水道光熱","通信","サブスク","保険","その他固定費"];
+const SUB_CATS = ["住居","水道光熱","通信","サブスク","分割払い","保険","その他固定費"];
 
 const defaultState = () => ({ incomes: [], subs: [], expenses: [], extras: [],
   templates: [], budgets: {}, startDate: null,
@@ -843,9 +915,6 @@ const incomeMonthlyFor = ym => activeIncomes(ym).reduce((a, i) => a + i.amount, 
 
 // 年払いは月額換算（年額÷12）
 const subMonthly = s => s.cycle === "yearly" ? s.amount / 12 : s.amount;
-const subAmountLabel = s => s.cycle === "yearly"
-  ? `${yen(s.amount)}／年（≒${yen(subMonthly(s))}／月）`
-  : `${yen(s.amount)}／月`;
 
 // その月の日別収支をまとめて計算する。
 // - 記録開始日（state.startDate）より前の日は「対象外」：収入・固定費を計上せず、累計にも含めない。
@@ -943,6 +1012,8 @@ let currentView = "daily";
 const openDays = new Set(); // 明細を開いている日
 let confirmingSubId = null;    // 削除確認中の固定費
 let editingSubId = null;       // 編集中の固定費
+let subSelectMode = false;     // 固定費の複数選択モード
+const selectedSubIds = new Set();
 let confirmingIncomeId = null; // 削除確認中の月収
 let editingIncomeId = null;    // 編集中の月収
 
@@ -1437,15 +1508,55 @@ function renderSummary(m) {
     const ul = document.createElement("ul"); ul.className = "plain";
     for (const s of [...m.subs].sort((a, b) => subMonthly(b) - subMonthly(a))) {
       const li = document.createElement("li");
-      const grow = document.createElement("span"); grow.className = "grow"; grow.textContent = s.name;
-      const chip = document.createElement("span"); chip.className = "cat-chip"; chip.textContent = s.cat;
-      const amt = document.createElement("span"); amt.className = "amt"; amt.textContent = subAmountLabel(s);
-      const daily = document.createElement("span"); daily.className = "sub-meta"; daily.textContent = "≒ " + yen(subMonthly(s) / m.n) + "／日";
-      li.append(grow, chip, amt, daily);
+      li.className = "sub-item";
+      li.append(subItemMain(s, m.n));
       ul.append(li);
     }
     list.append(ul);
   }
+}
+
+// 固定費1件の表示（名前・バッジ／金額・換算・日割り・期間の2行）
+function subItemMain(s, n) {
+  const main = document.createElement("div");
+  main.className = "sub-main";
+  const l1 = document.createElement("div"); l1.className = "sub-line1";
+  const name = document.createElement("span"); name.className = "sub-name"; name.textContent = s.name;
+  const cat = document.createElement("span"); cat.className = "cat-chip"; cat.textContent = s.cat;
+  l1.append(name, cat);
+  if (s.cycle === "yearly") {
+    const cy = document.createElement("span"); cy.className = "cat-chip cycle"; cy.textContent = "年払い";
+    l1.append(cy);
+  }
+  if (s.end && s.end < ymOf(todayStr())) {
+    const en = document.createElement("span"); en.className = "cat-chip ended"; en.textContent = "終了";
+    l1.append(en);
+  }
+  const l2 = document.createElement("div"); l2.className = "sub-line2";
+  const amt = document.createElement("span"); amt.className = "sub-amt-main";
+  amt.textContent = s.cycle === "yearly" ? `${yen(s.amount)}／年` : `${yen(s.amount)}／月`;
+  l2.append(amt);
+  if (s.cycle === "yearly") {
+    const conv = document.createElement("span"); conv.textContent = `月額換算 ${yen(subMonthly(s))}`;
+    l2.append(conv);
+  }
+  const daily = document.createElement("span"); daily.textContent = `日割り ≒ ${yen(subMonthly(s) / n)}`;
+  const period = document.createElement("span");
+  period.textContent = `${s.start.replace("-", "/")} 〜 ${s.end ? s.end.replace("-", "/") : ""}`;
+  l2.append(daily, period);
+  main.append(l1, l2);
+  return main;
+}
+
+function updateBulkUi() {
+  const sel = state.subs.filter(s => selectedSubIds.has(s.id));
+  $("#bulk-count").textContent = sel.length
+    ? `${sel.length}件選択中（合計 ${yen(sel.reduce((a, s) => a + subMonthly(s), 0))}／月）`
+    : "項目にチェックを入れて選択してください";
+  $("#sub-select-all").checked = state.subs.length > 0 && sel.length === state.subs.length;
+  ["#bulk-cat-apply", "#bulk-end-apply", "#bulk-end-clear", "#bulk-delete"].forEach(id =>
+    $(id).disabled = sel.length === 0);
+  if (sel.length === 0) $("#bulk-del-confirm").classList.add("hidden");
 }
 
 /* ---------- グラフ ---------- */
@@ -1873,6 +1984,21 @@ function renderSettings() {
   updateIncomeFormMode();
   renderIncomeList();
   updateSubFormMode();
+
+  // 固定費一覧
+  const nDays = daysInMonth(ymOf(todayStr()));
+  const totalMonthly = state.subs.reduce((a, s) => a + subMonthly(s), 0);
+  $("#sub-count-note").textContent = state.subs.length
+    ? `${state.subs.length}件 ・ 合計 ${yen(totalMonthly)}／月`
+    : "";
+  $("#sub-select-toggle").textContent = subSelectMode ? "選択をやめる" : "複数選択";
+  $("#sub-select-toggle").classList.toggle("hidden", state.subs.length === 0);
+  $("#sub-bulk").classList.toggle("hidden", !subSelectMode || state.subs.length === 0);
+  for (const id of [...selectedSubIds]) {
+    if (!state.subs.some(s => s.id === id)) selectedSubIds.delete(id);
+  }
+  if (subSelectMode) updateBulkUi();
+
   const list = $("#sub-list");
   list.textContent = "";
   if (state.subs.length === 0) {
@@ -1882,6 +2008,7 @@ function renderSettings() {
   }
   for (const s of [...state.subs].sort((a, b) => subMonthly(b) - subMonthly(a))) {
     const li = document.createElement("li");
+    li.className = "sub-item";
     if (confirmingSubId === s.id) {
       const q = document.createElement("span"); q.className = "grow"; q.textContent = `「${s.name}」を削除しますか？`;
       const yes = document.createElement("button");
@@ -1898,18 +2025,31 @@ function renderSettings() {
       no.addEventListener("click", () => { confirmingSubId = null; renderSettings(); });
       li.append(q, yes, no);
     } else {
-      const grow = document.createElement("span"); grow.className = "grow"; grow.textContent = s.name;
-      const chip = document.createElement("span"); chip.className = "cat-chip"; chip.textContent = s.cat;
-      const amt = document.createElement("span"); amt.className = "amt"; amt.textContent = subAmountLabel(s);
-      const meta = document.createElement("span"); meta.className = "sub-meta";
-      meta.textContent = s.start.replace("-", "/") + " 〜 " + (s.end ? s.end.replace("-", "/") : "");
-      const edit = document.createElement("button");
-      edit.className = "btn small"; edit.textContent = "編集";
-      edit.addEventListener("click", () => startSubEdit(s));
-      const del = document.createElement("button");
-      del.className = "btn small danger-text"; del.textContent = "削除";
-      del.addEventListener("click", () => { confirmingSubId = s.id; renderSettings(); });
-      li.append(grow, chip, amt, meta, edit, del);
+      if (subSelectMode) {
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.className = "sub-check";
+        cb.checked = selectedSubIds.has(s.id);
+        cb.setAttribute("aria-label", `${s.name}を選択`);
+        cb.addEventListener("change", () => {
+          cb.checked ? selectedSubIds.add(s.id) : selectedSubIds.delete(s.id);
+          updateBulkUi();
+        });
+        li.append(cb);
+      }
+      li.append(subItemMain(s, nDays));
+      if (!subSelectMode) {
+        const actions = document.createElement("div");
+        actions.className = "sub-actions";
+        const edit = document.createElement("button");
+        edit.className = "btn small"; edit.textContent = "編集";
+        edit.addEventListener("click", () => startSubEdit(s));
+        const del = document.createElement("button");
+        del.className = "btn small danger-text"; del.textContent = "削除";
+        del.addEventListener("click", () => { confirmingSubId = s.id; renderSettings(); });
+        actions.append(edit, del);
+        li.append(actions);
+      }
     }
     list.append(li);
   }
@@ -2234,6 +2374,69 @@ function initUi() {
     $("#sub-amount").placeholder =
       $("#sub-cycle").value === "yearly" ? "12000（年額）" : "1490（月額）";
   });
+
+  // 固定費の複数選択・一括操作
+  fillSelect($("#bulk-cat"), SUB_CATS);
+  $("#sub-select-toggle").addEventListener("click", () => {
+    subSelectMode = !subSelectMode;
+    selectedSubIds.clear();
+    confirmingSubId = null;
+    $("#bulk-del-confirm").classList.add("hidden");
+    renderSettings();
+  });
+  $("#sub-select-all").addEventListener("change", ev => {
+    selectedSubIds.clear();
+    if (ev.target.checked) state.subs.forEach(s => selectedSubIds.add(s.id));
+    renderSettings();
+  });
+  $("#bulk-cat-apply").addEventListener("click", () => {
+    const cat = $("#bulk-cat").value;
+    let n = 0;
+    state.subs.forEach(s => { if (selectedSubIds.has(s.id)) { s.cat = cat; n++; } });
+    if (n === 0) return;
+    persist(); renderSettings();
+    toast(`${n}件のカテゴリを「${cat}」に変更しました`);
+  });
+  $("#bulk-end-apply").addEventListener("click", () => {
+    const end = $("#bulk-end").value;
+    if (!end) { toast("終了月を選んでください"); return; }
+    let n = 0, skipped = 0;
+    state.subs.forEach(s => {
+      if (!selectedSubIds.has(s.id)) return;
+      if (s.start && end < s.start) { skipped++; return; }
+      s.end = end; n++;
+    });
+    if (n === 0 && skipped === 0) return;
+    persist(); renderSettings();
+    toast(`${n}件に終了月（${end.replace("-", "/")}）を設定しました` +
+      (skipped ? `。開始月より前のため${skipped}件はスキップしました` : ""));
+  });
+  $("#bulk-end-clear").addEventListener("click", () => {
+    let n = 0;
+    state.subs.forEach(s => { if (selectedSubIds.has(s.id)) { s.end = null; n++; } });
+    if (n === 0) return;
+    persist(); renderSettings();
+    toast(`${n}件の終了月を解除しました`);
+  });
+  $("#bulk-delete").addEventListener("click", () => {
+    if (selectedSubIds.size === 0) return;
+    $("#bulk-del-msg").textContent =
+      `選択した${selectedSubIds.size}件を削除しますか？過去の月の計算からも除外されます`;
+    $("#bulk-del-confirm").classList.remove("hidden");
+  });
+  $("#bulk-del-yes").addEventListener("click", () => {
+    const n = selectedSubIds.size;
+    if (n === 0) return;
+    if (editingSubId && selectedSubIds.has(editingSubId)) editingSubId = null;
+    state.subs = state.subs.filter(s => !selectedSubIds.has(s.id));
+    selectedSubIds.clear();
+    $("#bulk-del-confirm").classList.add("hidden");
+    if (state.subs.length === 0) subSelectMode = false;
+    persist(); render();
+    toast(`${n}件を削除しました`);
+  });
+  $("#bulk-del-no").addEventListener("click", () =>
+    $("#bulk-del-confirm").classList.add("hidden"));
 
   $("#sync-form").addEventListener("submit", ev => {
     ev.preventDefault();
